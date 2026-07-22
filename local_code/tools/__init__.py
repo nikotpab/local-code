@@ -2,12 +2,34 @@ from __future__ import annotations
 
 import json
 
-from local_code.tools import bash, edit_file, glob, grep, list_dir, read_file, write_file
+from local_code.tools import (
+    bash,
+    edit_file,
+    glob,
+    grep,
+    list_dir,
+    multi_edit,
+    read_file,
+    set_todos,
+    web_fetch,
+    write_file,
+)
 from local_code.tools.context import ToolContext
 
 __all__ = ["ALL_TOOLS", "ToolContext", "execute", "get_preview", "get_tool", "requires_confirmation", "tool_schemas"]
 
-ALL_TOOLS = [bash, edit_file, glob, grep, list_dir, read_file, write_file]
+ALL_TOOLS = [
+    bash,
+    edit_file,
+    glob,
+    grep,
+    list_dir,
+    multi_edit,
+    read_file,
+    set_todos,
+    web_fetch,
+    write_file,
+]
 _BY_NAME = {t.NAME: t for t in ALL_TOOLS}
 
 

@@ -6,9 +6,20 @@ from local_code.tools import ToolContext
 CTX = ToolContext()
 
 
-def test_all_seven_tools_registered():
+def test_all_tools_registered():
     names = {t.NAME for t in tools.ALL_TOOLS}
-    assert names == {"bash", "edit_file", "glob", "grep", "list_dir", "read_file", "write_file"}
+    assert names == {
+        "bash",
+        "edit_file",
+        "glob",
+        "grep",
+        "list_dir",
+        "multi_edit",
+        "read_file",
+        "set_todos",
+        "web_fetch",
+        "write_file",
+    }
 
 
 def test_get_tool():
@@ -20,11 +31,14 @@ def test_requires_confirmation():
     assert tools.requires_confirmation("bash") is True
     assert tools.requires_confirmation("read_file") is False
     assert tools.requires_confirmation("nope") is False
+    assert tools.requires_confirmation("multi_edit") is True
+    assert tools.requires_confirmation("web_fetch") is True
+    assert tools.requires_confirmation("set_todos") is False
 
 
 def test_tool_schemas_ollama_format():
     schemas = tools.tool_schemas()
-    assert len(schemas) == 7
+    assert len(schemas) == 10
     for s in schemas:
         assert s["type"] == "function"
         fn = s["function"]
