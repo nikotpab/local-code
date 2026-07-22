@@ -3,7 +3,8 @@
 Agentic coding CLI — Claude Code style — for **any** local model served by
 [Ollama](https://ollama.com). Models with native tool-calling support use it
 directly; models without it work through a ReAct-style prompt fallback, so
-even older models can drive the agent.
+even older models can drive the agent. Responses render as markdown live in
+the terminal.
 
 ## Install
 
@@ -20,11 +21,40 @@ local-code                             # interactive REPL with the default model
 local-code --model qwen2.5-coder       # pick a model
 local-code --yolo                      # skip all confirmations (careful)
 local-code --system "sos experto en Rust"
+local-code --resume                    # resume the latest session
+local-code --resume 20260722-153045    # resume a specific session
 local-code "arregla el bug en x.py"    # one-shot, no REPL
 ```
 
-REPL commands: `/clear` (reset history) · `/model <name>` (hot-switch model,
-re-detects tool support) · `/exit`.
+REPL commands: `/help` · `/tools` (tool table) · `/history` (current session
+summary) · `/sessions` (saved sessions) · `/clear` (reset history, starts a
+new session) · `/model <name>` (hot-switch model, re-detects tool support) ·
+`/exit`.
+
+## Project context
+
+If a `LOCALCODE.md` (or, as fallback, `AGENTS.md`) file exists in the
+directory where you launch `local-code`, its content is appended to the
+system prompt automatically — use it for project conventions, build
+commands, and style rules. Content is capped at 20k characters.
+
+## Sessions
+
+Every conversation autosaves to `~/.local-code/sessions/<id>.json` after
+each turn. Resume the latest with `local-code --resume`, or a specific one
+with `local-code --resume <id>` (list them with `/sessions`). `/clear`
+starts a fresh session id.
+
+## @file mentions
+
+Mention files in your prompt with `@path/to/file` and their content is
+attached to the message automatically:
+
+```bash
+local-code "explicá qué hace @local_code/agent.py"
+```
+
+Missing files produce a warning and the message is sent anyway.
 
 ## Tools available to the model
 
