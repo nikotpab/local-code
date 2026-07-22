@@ -92,5 +92,48 @@ class Agent:
         self.notify(f"Reached max iterations ({self.config.max_iterations}); stopping.")
         return content
 
+    def _react_messages(self) -> list[dict]:
+        system = react.build_system_prompt(
+            self.session.system_prompt or "", tools.tool_schemas()
+        )
+        return [{"role": "system", "content": system}] + self.session.history
+
     def _run_react(self) -> str:
-        raise NotImplementedError  # Task 13
+        failures = 0
+        content = ""
+        for _ in range(self.config.max_iterations):
+            content, _ = self._stream(self._react_messages(), None)
+            self.session.add({"role": "assistant", "content": content})
+            try:
+                calls = react.parse_tool_calls(content)
+            except react.ToolCallParseError as e:
+                failures += 1
+                if failures > 2:
+                    self.notify("Aborting: 3 consecutive invalid tool calls.")
+                    return content
+                self.session.add(
+                    {"role": "user", "content": react.format_observation(f"Error: {e}")}
+                )
+                continue
+            unknown = [c for c in calls if tools.get_tool(c.name) is None]
+            if unknown:
+                failures += 1
+                if failures > 2:
+                    self.notify("Aborting: 3 consecutive invalid tool calls.")
+                    return content
+                obs = "\n\n".join(
+                    react.format_observation(f"Error: unknown tool '{c.name}'")
+                    for c in unknown
+                )
+                self.session.add({"role": "user", "content": obs})
+                continue
+            if not calls:
+                return content
+            failures = 0
+            observations = [
+                react.format_observation(self._execute(c.name, c.arguments))
+                for c in calls
+            ]
+            self.session.add({"role": "user", "content": "\n\n".join(observations)})
+        self.notify(f"Reached max iterations ({self.config.max_iterations}); stopping.")
+        return content
