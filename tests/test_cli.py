@@ -97,3 +97,25 @@ def test_markdown_streamer_lifecycle():
     streamer.start()
     assert streamer.buffer == ""
     streamer.end()
+
+
+def test_smoke_help_exits_zero():
+    import subprocess
+
+    result = subprocess.run(
+        [".venv/bin/local-code", "--help"], capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert "--resume" in result.stdout
+
+
+def test_smoke_resume_unknown_session_exits_one(tmp_path):
+    import subprocess
+
+    result = subprocess.run(
+        [".venv/bin/local-code", "--resume", "nonexistent-id"],
+        capture_output=True,
+        text=True,
+        cwd=".",
+    )
+    assert result.returncode == 1
