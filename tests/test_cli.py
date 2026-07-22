@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from local_code.cli import handle_command, parse_args, style_preview_lines
+from local_code.cli import MarkdownStreamer, handle_command, history_summary, parse_args, style_preview_lines
 
 
 def test_parse_args_defaults():
@@ -47,3 +47,53 @@ def test_style_preview_lines_diff_colors():
         ("+new", "green"),
         ("context", ""),
     ]
+
+
+def test_parse_args_resume_absent():
+    assert parse_args([]).resume is None
+
+
+def test_parse_args_resume_bare():
+    assert parse_args(["--resume"]).resume == "latest"
+
+
+def test_parse_args_resume_with_id():
+    assert parse_args(["--resume", "20260722-120000"]).resume == "20260722-120000"
+
+
+def test_handle_command_new_commands():
+    assert handle_command("/help") == ("help", None)
+    assert handle_command("/tools") == ("tools", None)
+    assert handle_command("/history") == ("history", None)
+    assert handle_command("/sessions") == ("sessions", None)
+
+
+def test_history_summary_empty():
+    assert history_summary("s1", "qwen", []) == "session s1 · model qwen · empty"
+
+
+def test_history_summary_counts_roles():
+    history = [
+        {"role": "user", "content": "a"},
+        {"role": "assistant", "content": "b"},
+        {"role": "user", "content": "c"},
+    ]
+    out = history_summary("s1", "qwen", history)
+    assert out == "session s1 · model qwen · 3 messages (assistant: 1, user: 2)"
+
+
+def test_markdown_streamer_lifecycle():
+    import io
+
+    from rich.console import Console
+
+    streamer = MarkdownStreamer(Console(file=io.StringIO(), force_terminal=False))
+    streamer.token("ignored before start")
+    streamer.start()
+    streamer.token("# hola\n")
+    streamer.token("mundo")
+    assert streamer.buffer == "# hola\nmundo"
+    streamer.end()
+    streamer.start()
+    assert streamer.buffer == ""
+    streamer.end()

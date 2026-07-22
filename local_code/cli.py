@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections import Counter
 
 from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.text import Text
@@ -24,6 +27,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", help="Model name (default: from ~/.local-code/config.yaml)")
     parser.add_argument("--yolo", action="store_true", help="Skip all tool confirmations")
     parser.add_argument("--system", help="Override the system prompt")
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="latest",
+        default=None,
+        metavar="ID",
+        help="Resume the latest session, or a specific session id",
+    )
     parser.add_argument("prompt", nargs="*", help="One-shot prompt; omit for interactive REPL")
     return parser.parse_args(argv)
 
@@ -40,6 +51,14 @@ def handle_command(line: str) -> tuple[str, str | None]:
         return ("exit", None)
     if cmd == "/model":
         return ("model", arg)
+    if cmd == "/help":
+        return ("help", None)
+    if cmd == "/tools":
+        return ("tools", None)
+    if cmd == "/history":
+        return ("history", None)
+    if cmd == "/sessions":
+        return ("sessions", None)
     return ("unknown", stripped)
 
 
@@ -53,6 +72,39 @@ def style_preview_lines(preview: str) -> list[tuple[str, str]]:
         else:
             styled.append((line, ""))
     return styled
+
+
+class MarkdownStreamer:
+    def __init__(self, console: Console):
+        self.console = console
+        self.buffer = ""
+        self._live: Live | None = None
+
+    def start(self) -> None:
+        self.buffer = ""
+        self._live = Live(
+            Markdown(""), console=self.console, refresh_per_second=10
+        )
+        self._live.start()
+
+    def token(self, token: str) -> None:
+        if self._live is None:
+            return
+        self.buffer += token
+        self._live.update(Markdown(self.buffer))
+
+    def end(self) -> None:
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
+
+
+def history_summary(session_id: str, model: str, history: list[dict]) -> str:
+    if not history:
+        return f"session {session_id} · model {model} · empty"
+    counts = Counter(m.get("role", "?") for m in history)
+    parts = ", ".join(f"{role}: {n}" for role, n in sorted(counts.items()))
+    return f"session {session_id} · model {model} · {len(history)} messages ({parts})"
 
 
 def make_confirmer(console: Console):
