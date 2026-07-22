@@ -83,10 +83,12 @@ class Agent:
 
     def _execute(self, name: str, arguments: dict) -> str:
         if not self.config.yolo and tools.requires_confirmation(name):
-            pre_allowed = (
-                self.permission_store is not None
-                and self.permission_store.is_allowed(name, arguments)
-            )
+            pre_allowed = False
+            if self.permission_store is not None:
+                try:
+                    pre_allowed = self.permission_store.is_allowed(name, arguments)
+                except Exception:
+                    pre_allowed = False
             if not pre_allowed:
                 preview = tools.get_preview(name, arguments)
                 decision = self.confirm(name, preview)
@@ -94,10 +96,13 @@ class Agent:
                     decision = "yes"
                 elif decision is False:
                     decision = "no"
-                if decision == "no":
+                if decision not in ("yes", "always"):
                     return DECLINED
                 if decision == "always" and self.permission_store is not None:
-                    self.permission_store.allow(name, arguments)
+                    try:
+                        self.permission_store.allow(name, arguments)
+                    except Exception:
+                        pass
         self.notify(f"→ {name}({json.dumps(arguments, ensure_ascii=False)[:120]})")
         return tools.execute(name, arguments, self.context)
 

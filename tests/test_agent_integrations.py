@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from local_code.agent import DECLINED, DEFAULT_SYSTEM_PROMPT, Agent, AgentConfig
 from local_code.session import Session
 from tests.conftest import FakeClient, text_chunks, tool_call_chunks
@@ -96,3 +98,70 @@ def test_on_todos_reaches_tool():
 
 def test_system_prompt_mentions_set_todos():
     assert "set_todos" in DEFAULT_SYSTEM_PROMPT
+
+
+def run_write_turn(tmp_path, monkeypatch, **kwargs):
+    """Run one turn where the model asks to write x.txt, and report the outcome."""
+    monkeypatch.chdir(tmp_path)
+    client = FakeClient([
+        tool_call_chunks("write_file", {"path": "x.txt", "content": "d"}),
+        text_chunks("listo"),
+    ])
+    agent = make_agent(client, **kwargs)
+    agent.run_turn("dale")
+    tool_msg = [m for m in agent.session.history if m["role"] == "tool"][0]
+    return (tmp_path / "x.txt").exists(), tool_msg["content"]
+
+
+@pytest.mark.parametrize("bad_decision", [None, "", 0, [], "maybe", "ALWAYS"])
+def test_unrecognized_confirmation_fails_closed(tmp_path, monkeypatch, bad_decision):
+    written, message = run_write_turn(
+        tmp_path, monkeypatch, confirm=lambda n, p: bad_decision
+    )
+    assert written is False
+    assert message == DECLINED
+
+
+def test_yes_string_executes(tmp_path, monkeypatch):
+    written, _ = run_write_turn(tmp_path, monkeypatch, confirm=lambda n, p: "yes")
+    assert written is True
+
+
+class ExplodingPermissions:
+    def __init__(self, raise_on_allow=False):
+        self.raise_on_allow = raise_on_allow
+        self.confirm_was_asked = False
+
+    def is_allowed(self, name, arguments):
+        if not self.raise_on_allow:
+            raise RuntimeError("corrupt store")
+        return False
+
+    def allow(self, name, arguments):
+        if self.raise_on_allow:
+            raise RuntimeError("cannot persist")
+
+
+def test_is_allowed_failure_falls_back_to_asking(tmp_path, monkeypatch):
+    perms = ExplodingPermissions()
+
+    def confirm(name, preview):
+        perms.confirm_was_asked = True
+        return "no"
+
+    written, message = run_write_turn(
+        tmp_path, monkeypatch, permission_store=perms, confirm=confirm
+    )
+    assert perms.confirm_was_asked is True
+    assert written is False
+    assert message == DECLINED
+
+
+def test_allow_failure_does_not_abort_execution(tmp_path, monkeypatch):
+    written, _ = run_write_turn(
+        tmp_path,
+        monkeypatch,
+        permission_store=ExplodingPermissions(raise_on_allow=True),
+        confirm=lambda n, p: "always",
+    )
+    assert written is True
