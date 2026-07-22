@@ -22,7 +22,7 @@ local-code --model qwen2.5-coder       # pick a model
 local-code --yolo                      # skip all confirmations (careful)
 local-code --system "sos experto en Rust"
 local-code --resume                    # resume the latest session
-local-code --resume 20260722-153045    # resume a specific session
+local-code --resume 20260722-153045-a1b2  # resume a specific session
 local-code "arregla el bug en x.py"    # one-shot, no REPL
 ```
 

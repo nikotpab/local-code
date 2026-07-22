@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import secrets
 from datetime import datetime
 from pathlib import Path
 
 SESSIONS_DIR = Path.home() / ".local-code" / "sessions"
+
+_VALID_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class SessionNotFoundError(Exception):
@@ -18,9 +22,11 @@ class SessionStore:
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def new_id(self) -> str:
-        return datetime.now().strftime("%Y%m%d-%H%M%S")
+        return datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
 
     def _path(self, session_id: str) -> Path:
+        if ".." in session_id or not _VALID_SESSION_ID_RE.fullmatch(session_id):
+            raise SessionNotFoundError(f"Invalid session id '{session_id}'")
         return self.dir / f"{session_id}.json"
 
     def save(
@@ -36,7 +42,7 @@ class SessionStore:
         cwd = str(Path.cwd())
         if path.exists():
             try:
-                old = json.loads(path.read_text())
+                old = json.loads(path.read_text(encoding="utf-8"))
                 created_at = old.get("created_at", now)
                 cwd = old.get("cwd", cwd)
             except (OSError, json.JSONDecodeError):
@@ -51,13 +57,13 @@ class SessionStore:
             "history": history,
         }
         tmp = path.parent / (path.name + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, path)
 
     def load(self, session_id: str) -> dict:
         path = self._path(session_id)
         try:
-            return json.loads(path.read_text())
+            return json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError as e:
             raise SessionNotFoundError(
                 f"Session '{session_id}' not found in {self.dir}"

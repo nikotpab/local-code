@@ -13,7 +13,7 @@ def load_project_context(cwd: Path | None = None) -> tuple[str, str] | None:
         if not path.is_file():
             continue
         try:
-            content = path.read_text()
+            content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             return None
         if len(content) > MAX_CONTEXT_CHARS:

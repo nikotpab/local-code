@@ -22,7 +22,7 @@ def expand_file_mentions(text: str) -> tuple[str, list[str]]:
             warnings.append(f"@{token} no encontrado")
             continue
         try:
-            content = path.read_text()
+            content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             warnings.append(f"@{token} no se pudo leer")
             continue
