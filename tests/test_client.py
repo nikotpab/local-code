@@ -22,7 +22,13 @@ class FakeHTTPResponse:
         self.text = text
 
     def iter_lines(self):
-        return iter(self._lines)
+        # Items that are exceptions are raised mid-iteration instead of
+        # yielded, to simulate a connection dropping partway through a
+        # stream.
+        for item in self._lines:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
     def json(self):
         return self._json
@@ -95,6 +101,56 @@ def test_chat_midstream_error_chunk(monkeypatch):
     install_post(monkeypatch, response=resp)
     with pytest.raises(OllamaError, match="out of memory"):
         list(OllamaClient().chat("m", []))
+
+
+def test_chat_stream_connection_drop_mid_iteration(monkeypatch):
+    # A partial chunk arrives, then the connection drops while iterating
+    # iter_lines() itself (outside of the initial requests.post call).
+    resp = FakeHTTPResponse(
+        lines=[
+            chunk_line({"message": {"role": "assistant", "content": "he"}, "done": False}),
+            requests.exceptions.ConnectionError("connection dropped mid-stream"),
+        ]
+    )
+    install_post(monkeypatch, response=resp)
+    with pytest.raises(OllamaError) as exc_info:
+        list(OllamaClient().chat("m", []))
+    assert "stream" in str(exc_info.value).lower()
+
+
+def test_chat_stream_chunked_encoding_error_mid_iteration(monkeypatch):
+    resp = FakeHTTPResponse(
+        lines=[requests.exceptions.ChunkedEncodingError("connection broken")]
+    )
+    install_post(monkeypatch, response=resp)
+    with pytest.raises(OllamaError):
+        list(OllamaClient().chat("m", []))
+
+
+def test_chat_stream_truncated_json_line(monkeypatch):
+    # Connection drops mid-write, leaving a truncated final ndjson line.
+    resp = FakeHTTPResponse(lines=[b'{"message": {"role": "assistant", "content": "partial"'])
+    install_post(monkeypatch, response=resp)
+    with pytest.raises(OllamaError) as exc_info:
+        list(OllamaClient().chat("m", []))
+    message = str(exc_info.value).lower()
+    assert "truncated" in message or "invalid" in message
+
+
+def test_chat_read_timeout(monkeypatch):
+    install_post(monkeypatch, exc=requests.exceptions.ReadTimeout("timed out"))
+    with pytest.raises(OllamaConnectionError) as exc_info:
+        list(OllamaClient(host="http://x:1").chat("m", []))
+    message = str(exc_info.value).lower()
+    assert "timed out" in message or "timeout" in message
+    assert "http://x:1" in str(exc_info.value)
+
+
+def test_chat_generic_request_exception(monkeypatch):
+    install_post(monkeypatch, exc=requests.exceptions.RequestException("weird failure"))
+    with pytest.raises(OllamaError) as exc_info:
+        list(OllamaClient().chat("m", []))
+    assert type(exc_info.value) is OllamaError
 
 
 def test_show_success(monkeypatch):
