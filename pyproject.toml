@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "local-code"
+version = "0.1.0"
+description = "Agentic coding CLI for any local model served by Ollama"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.28",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+local-code = "local_code.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["local_code"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
