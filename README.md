@@ -1,6 +1,6 @@
 # local-code
 
-Agentic coding CLI — Claude Code style — for **any** local model served by
+Agentic coding CLI for **any** local model served by
 [Ollama](https://ollama.com). Models with native tool-calling support use it
 directly; models without it work through a ReAct-style prompt fallback, so
 even older models can drive the agent. Responses render as markdown live in
