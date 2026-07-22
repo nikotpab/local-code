@@ -15,6 +15,7 @@ class Config:
     bash_timeout_seconds: int = 120
     system_prompt: str | None = None
     ollama_host: str = "http://localhost:11434"
+    context_window: int | None = None
 
 
 def load_config(path: Path | None = None) -> Config:

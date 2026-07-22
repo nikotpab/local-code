@@ -49,3 +49,10 @@ def test_empty_file(tmp_path):
     p = tmp_path / "config.yaml"
     p.write_text("")
     assert load_config(p) == Config()
+
+
+def test_context_window(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("context_window: 32768\n")
+    assert load_config(p).context_window == 32768
+    assert load_config(tmp_path / "nope.yaml").context_window is None
