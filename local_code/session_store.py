@@ -68,7 +68,7 @@ class SessionStore:
             raise SessionNotFoundError(
                 f"Session '{session_id}' not found in {self.dir}"
             ) from e
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
             raise SessionNotFoundError(
                 f"Session '{session_id}' is unreadable: {e}"
             ) from e
@@ -86,8 +86,8 @@ class SessionStore:
             if len(out) >= limit:
                 break
             try:
-                data = json.loads(f.read_text())
-            except (OSError, json.JSONDecodeError):
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
                 continue
             first = ""
             for m in data.get("history", []):

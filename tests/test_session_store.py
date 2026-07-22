@@ -127,3 +127,11 @@ def test_save_rejects_traversal_and_touches_nothing_outside(tmp_path):
     )
     assert not (tmp_path / "evil.json.tmp").exists()
     assert list(store.dir.iterdir()) == []
+
+
+def test_non_utf8_file_skipped_in_listing_and_raises_on_load(tmp_path):
+    store = make_store(tmp_path)
+    (store.dir / "binary.json").write_bytes(b"\xff\xfe\x00not-utf8")
+    assert store.list_sessions() == []
+    with pytest.raises(SessionNotFoundError):
+        store.load("binary")
