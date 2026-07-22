@@ -34,6 +34,8 @@ class Agent:
         confirm: Callable[[str, str], bool] | None = None,
         on_token: Callable[[str], None] | None = None,
         notify: Callable[[str], None] | None = None,
+        on_stream_start: Callable[[], None] | None = None,
+        on_stream_end: Callable[[], None] | None = None,
     ):
         self.client = client
         self.session = session
@@ -42,6 +44,8 @@ class Agent:
         self.confirm = confirm or (lambda name, preview: True)
         self.on_token = on_token or (lambda token: None)
         self.notify = notify or (lambda message: None)
+        self.on_stream_start = on_stream_start or (lambda: None)
+        self.on_stream_end = on_stream_end or (lambda: None)
         self.context = ToolContext(bash_timeout=config.bash_timeout)
 
     def run_turn(self, user_input: str) -> str:
@@ -53,13 +57,17 @@ class Agent:
     def _stream(self, messages: list[dict], tools_param: list[dict] | None):
         content = ""
         tool_calls: list[dict] = []
-        for chunk in self.client.chat(self.config.model, messages, tools=tools_param):
-            msg = chunk.get("message", {})
-            token = msg.get("content", "")
-            if token:
-                content += token
-                self.on_token(token)
-            tool_calls.extend(msg.get("tool_calls") or [])
+        self.on_stream_start()
+        try:
+            for chunk in self.client.chat(self.config.model, messages, tools=tools_param):
+                msg = chunk.get("message", {})
+                token = msg.get("content", "")
+                if token:
+                    content += token
+                    self.on_token(token)
+                tool_calls.extend(msg.get("tool_calls") or [])
+        finally:
+            self.on_stream_end()
         return content, tool_calls
 
     def _execute(self, name: str, arguments: dict) -> str:
