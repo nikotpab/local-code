@@ -11,7 +11,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "You are local-code, a coding agent running in the user's terminal.\n"
     "Working directory: {cwd}\n"
     "Use the available tools to inspect and modify files and to run commands.\n"
-    "Read the relevant files before editing them. Keep answers short."
+    "Read the relevant files before editing them. Keep answers short.\n"
+    "For multi-step tasks, call set_todos first to plan, and update item "
+    "statuses as you progress."
 )
 DECLINED = "User declined to run this tool."
 
@@ -36,6 +38,9 @@ class Agent:
         notify: Callable[[str], None] | None = None,
         on_stream_start: Callable[[], None] | None = None,
         on_stream_end: Callable[[], None] | None = None,
+        compactor=None,
+        permission_store=None,
+        on_todos=None,
     ):
         self.client = client
         self.session = session
@@ -46,9 +51,15 @@ class Agent:
         self.notify = notify or (lambda message: None)
         self.on_stream_start = on_stream_start or (lambda: None)
         self.on_stream_end = on_stream_end or (lambda: None)
-        self.context = ToolContext(bash_timeout=config.bash_timeout)
+        self.compactor = compactor
+        self.permission_store = permission_store
+        self.context = ToolContext(
+            bash_timeout=config.bash_timeout, on_todos=on_todos
+        )
 
     def run_turn(self, user_input: str) -> str:
+        if self.compactor is not None:
+            self.compactor.maybe_compact(self.session)
         self.session.add({"role": "user", "content": user_input})
         if self.use_native:
             return self._run_native()
@@ -72,9 +83,21 @@ class Agent:
 
     def _execute(self, name: str, arguments: dict) -> str:
         if not self.config.yolo and tools.requires_confirmation(name):
-            preview = tools.get_preview(name, arguments)
-            if not self.confirm(name, preview):
-                return DECLINED
+            pre_allowed = (
+                self.permission_store is not None
+                and self.permission_store.is_allowed(name, arguments)
+            )
+            if not pre_allowed:
+                preview = tools.get_preview(name, arguments)
+                decision = self.confirm(name, preview)
+                if decision is True:
+                    decision = "yes"
+                elif decision is False:
+                    decision = "no"
+                if decision == "no":
+                    return DECLINED
+                if decision == "always" and self.permission_store is not None:
+                    self.permission_store.allow(name, arguments)
         self.notify(f"→ {name}({json.dumps(arguments, ensure_ascii=False)[:120]})")
         return tools.execute(name, arguments, self.context)
 

@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from local_code.agent import DECLINED, DEFAULT_SYSTEM_PROMPT, Agent, AgentConfig
+from local_code.session import Session
+from tests.conftest import FakeClient, text_chunks, tool_call_chunks
+
+
+class FakeCompactor:
+    def __init__(self):
+        self.calls = 0
+        self.history_len_at_call = None
+
+    def maybe_compact(self, session):
+        self.calls += 1
+        self.history_len_at_call = len(session.history)
+        return False
+
+
+class FakePermissions:
+    def __init__(self, allowed=False):
+        self.allowed = allowed
+        self.allow_calls = []
+
+    def is_allowed(self, name, arguments):
+        return self.allowed
+
+    def allow(self, name, arguments):
+        self.allow_calls.append((name, arguments))
+
+
+def make_agent(client, **kwargs):
+    cfg = AgentConfig(model="m")
+    return Agent(client, Session(system_prompt="base"), cfg, use_native=True, **kwargs)
+
+
+def test_compactor_called_before_user_message():
+    compactor = FakeCompactor()
+    agent = make_agent(FakeClient([text_chunks("ok")]), compactor=compactor)
+    agent.run_turn("hola")
+    assert compactor.calls == 1
+    assert compactor.history_len_at_call == 0
+
+
+def test_permission_store_allows_without_confirm(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    def explode(name, preview):
+        raise AssertionError("confirm must not be called when allowed")
+
+    client = FakeClient([
+        tool_call_chunks("write_file", {"path": "x.txt", "content": "d"}),
+        text_chunks("listo"),
+    ])
+    agent = make_agent(client, permission_store=FakePermissions(allowed=True), confirm=explode)
+    agent.run_turn("dale")
+    assert (tmp_path / "x.txt").read_text() == "d"
+
+
+def test_always_registers_and_executes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    perms = FakePermissions(allowed=False)
+    client = FakeClient([
+        tool_call_chunks("write_file", {"path": "x.txt", "content": "d"}),
+        text_chunks("listo"),
+    ])
+    agent = make_agent(client, permission_store=perms, confirm=lambda n, p: "always")
+    agent.run_turn("dale")
+    assert (tmp_path / "x.txt").exists()
+    assert perms.allow_calls == [("write_file", {"path": "x.txt", "content": "d"})]
+
+
+def test_bool_confirm_still_works(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = FakeClient([
+        tool_call_chunks("write_file", {"path": "x.txt", "content": "d"}),
+        text_chunks("ok"),
+    ])
+    agent = make_agent(client, confirm=lambda n, p: False)
+    agent.run_turn("dale")
+    assert not (tmp_path / "x.txt").exists()
+    tool_msg = [m for m in agent.session.history if m["role"] == "tool"][0]
+    assert tool_msg["content"] == DECLINED
+
+
+def test_on_todos_reaches_tool():
+    received = []
+    todos = [{"text": "paso 1", "status": "pending"}]
+    client = FakeClient([
+        tool_call_chunks("set_todos", {"todos": todos}),
+        text_chunks("planificado"),
+    ])
+    agent = make_agent(client, on_todos=received.append)
+    agent.run_turn("plan")
+    assert received == [todos]
+
+
+def test_system_prompt_mentions_set_todos():
+    assert "set_todos" in DEFAULT_SYSTEM_PROMPT
