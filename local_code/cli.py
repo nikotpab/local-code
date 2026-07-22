@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
@@ -16,8 +16,11 @@ from local_code import tools
 from local_code.agent import DEFAULT_SYSTEM_PROMPT, Agent, AgentConfig
 from local_code.capabilities import CapabilityDetector
 from local_code.client import OllamaClient, OllamaError
+from local_code.compaction import Compactor, detect_context_window
 from local_code.config import Config, load_config
+from local_code.custom_commands import list_custom_commands, load_custom_command
 from local_code.mentions import expand_file_mentions
+from local_code.permissions import PermissionStore
 from local_code.project_context import load_project_context
 from local_code.session import Session
 from local_code.session_store import SessionNotFoundError, SessionStore
@@ -63,7 +66,7 @@ def handle_command(line: str) -> tuple[str, str | None]:
         return ("history", None)
     if cmd == "/sessions":
         return ("sessions", None)
-    return ("unknown", stripped)
+    return ("custom", stripped)
 
 
 def style_preview_lines(preview: str) -> list[tuple[str, str]]:
@@ -76,6 +79,20 @@ def style_preview_lines(preview: str) -> list[tuple[str, str]]:
         else:
             styled.append((line, ""))
     return styled
+
+
+CONFIRM_CHOICES = {"y": "yes", "n": "no", "a": "always"}
+TODO_ICONS = {"pending": "☐", "in_progress": "◐", "done": "☑"}
+
+
+def make_todo_renderer(console: Console):
+    def render(todos: list) -> None:
+        lines = "\n".join(
+            f"{TODO_ICONS.get(t.get('status'), '?')} {t.get('text', '')}" for t in todos
+        )
+        console.print(Panel(lines or "(vacío)", title="todos", border_style="cyan"))
+
+    return render
 
 
 class MarkdownStreamer:
@@ -112,12 +129,15 @@ def history_summary(session_id: str, model: str, history: list[dict]) -> str:
 
 
 def make_confirmer(console: Console):
-    def confirm(name: str, preview: str) -> bool:
+    def confirm(name: str, preview: str) -> str:
         text = Text()
         for line, style in style_preview_lines(preview):
             text.append(line + "\n", style=style)
         console.print(Panel(text, title=f"[bold]{name}[/bold]", border_style="yellow"))
-        return Confirm.ask("Run this?", default=False)
+        choice = Prompt.ask(
+            "Run this? [y=yes / n=no / a=always]", choices=["y", "n", "a"], default="n"
+        )
+        return CONFIRM_CHOICES[choice]
 
     return confirm
 
@@ -141,6 +161,12 @@ def build_agent(
         bash_timeout=cfg.bash_timeout_seconds,
         yolo=yolo,
     )
+    window = cfg.context_window or detect_context_window(client, model)
+    compactor = Compactor(
+        client, model, window,
+        notify=lambda message: console.print(f"[dim]{message}[/dim]"),
+    )
+    permission_store = PermissionStore()
     return Agent(
         client,
         session,
@@ -151,6 +177,9 @@ def build_agent(
         notify=lambda message: console.print(f"\n[dim]{message}[/dim]"),
         on_stream_start=streamer.start,
         on_stream_end=streamer.end,
+        compactor=compactor,
+        permission_store=permission_store,
+        on_todos=make_todo_renderer(console),
     )
 
 
@@ -167,10 +196,17 @@ def save_session(
         console.print(f"[dim yellow]session save failed: {e}[/dim yellow]")
 
 
-HELP_TEXT = """\
-Comandos: /help · /tools · /history · /sessions · /clear · /model <name> · /exit
-Flags de arranque: --model NAME · --yolo · --system TEXT · --resume [ID]
-Menciones: @ruta/archivo inyecta el contenido del archivo en tu mensaje."""
+def help_text() -> str:
+    base = (
+        "Comandos: /help · /tools · /history · /sessions · /clear · /model <name> · /exit\n"
+        "Flags de arranque: --model NAME · --yolo · --system TEXT · --resume [ID]\n"
+        "Confirmaciones: y = sí · n = no · a = siempre (se guarda en ~/.local-code/permissions.yaml)\n"
+        "Menciones: @ruta/archivo inyecta el contenido del archivo en tu mensaje."
+    )
+    customs = list_custom_commands()
+    if customs:
+        base += "\nCustom: " + " · ".join(f"/{c}" for c in customs)
+    return base
 
 
 def print_tools_table(console: Console) -> None:
@@ -211,6 +247,21 @@ def repl(
     streamer: MarkdownStreamer,
 ) -> int:
     console.print("[bold]local-code[/bold] — /help para comandos")
+
+    def run_chat(text: str) -> None:
+        expanded, warnings = expand_file_mentions(text)
+        for w in warnings:
+            console.print(f"[dim yellow]{w}[/dim yellow]")
+        try:
+            agent.run_turn(expanded)
+            print()
+        except KeyboardInterrupt:
+            streamer.end()
+            console.print("\n[dim]turn interrupted[/dim]")
+        except OllamaError as e:
+            console.print(f"\n[red]{e}[/red]")
+        save_session(store, session_id, agent.config.model, session, console)
+
     while True:
         try:
             line = console.input("\n[bold cyan]> [/bold cyan]")
@@ -237,7 +288,7 @@ def repl(
                 console.print(f"[red]{e}[/red]")
             continue
         if action == "help":
-            console.print(HELP_TEXT)
+            console.print(help_text())
             continue
         if action == "tools":
             print_tools_table(console)
@@ -250,23 +301,19 @@ def repl(
         if action == "sessions":
             print_sessions_table(store, console)
             continue
-        if action == "unknown":
-            console.print(f"[red]unknown command: {arg}[/red]")
+        if action == "custom":
+            parts = arg.split(maxsplit=1)
+            name = parts[0][1:]
+            cmd_args = parts[1] if len(parts) > 1 else ""
+            text = load_custom_command(name, cmd_args)
+            if text is None:
+                console.print(f"[red]unknown command: {arg}[/red]")
+                continue
+            run_chat(text)
             continue
         if not arg:
             continue
-        text, warnings = expand_file_mentions(arg)
-        for w in warnings:
-            console.print(f"[dim yellow]{w}[/dim yellow]")
-        try:
-            agent.run_turn(text)
-            print()
-        except KeyboardInterrupt:
-            streamer.end()
-            console.print("\n[dim]turn interrupted[/dim]")
-        except OllamaError as e:
-            console.print(f"\n[red]{e}[/red]")
-        save_session(store, session_id, agent.config.model, session, console)
+        run_chat(arg)
 
 
 def main(argv: list[str] | None = None) -> int:

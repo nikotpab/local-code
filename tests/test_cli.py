@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from local_code.cli import MarkdownStreamer, handle_command, history_summary, parse_args, style_preview_lines
+from local_code.cli import (
+    CONFIRM_CHOICES,
+    TODO_ICONS,
+    MarkdownStreamer,
+    handle_command,
+    history_summary,
+    make_todo_renderer,
+    parse_args,
+    style_preview_lines,
+)
 
 
 def test_parse_args_defaults():
@@ -33,8 +42,9 @@ def test_handle_command_model():
     assert handle_command("/model") == ("model", None)
 
 
-def test_handle_command_unknown():
-    assert handle_command("/wat") == ("unknown", "/wat")
+def test_handle_command_unknown_becomes_custom():
+    assert handle_command("/wat") == ("custom", "/wat")
+    assert handle_command("/wat con args") == ("custom", "/wat con args")
 
 
 def test_style_preview_lines_diff_colors():
@@ -119,3 +129,24 @@ def test_smoke_resume_unknown_session_exits_one(tmp_path):
         cwd=".",
     )
     assert result.returncode == 1
+
+
+def test_confirm_choices_map():
+    assert CONFIRM_CHOICES == {"y": "yes", "n": "no", "a": "always"}
+
+
+def test_todo_icons():
+    assert TODO_ICONS == {"pending": "☐", "in_progress": "◐", "done": "☑"}
+
+
+def test_todo_renderer_prints(tmp_path):
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    render = make_todo_renderer(Console(file=buf, force_terminal=False))
+    render([{"text": "paso uno", "status": "pending"}, {"text": "hecho", "status": "done"}])
+    out = buf.getvalue()
+    assert "paso uno" in out
+    assert "hecho" in out
