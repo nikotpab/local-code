@@ -4,7 +4,8 @@ Agentic coding CLI for **any** local model served by
 [Ollama](https://ollama.com). Models with native tool-calling support use it
 directly; models without it work through a ReAct-style prompt fallback, so
 even older models can drive the agent. Responses render as markdown live in
-the terminal.
+the terminal, and the agent keeps a visible todo checklist while it works
+through multi-step tasks.
 
 ## Install
 
@@ -60,9 +61,43 @@ Missing files produce a warning and the message is sent anyway.
 
 | Tool | Asks confirmation |
 |---|---|
-| `read_file`, `list_dir`, `glob`, `grep` | No |
-| `write_file`, `edit_file` (shows diff) | Yes |
-| `bash` (shows command) | Yes |
+| `read_file`, `list_dir`, `glob`, `grep`, `set_todos` | No |
+| `write_file`, `edit_file` (shows diff), `multi_edit` (shows diff) | Yes |
+| `bash` (shows command), `web_fetch` (shows URL) | Yes |
+
+## Context compaction
+
+Local models have small context windows. When the conversation grows past
+~70% of the model's window (auto-detected from Ollama, or set
+`context_window` in the config), older messages are summarized by the same
+model into a single note and recent messages are kept. If summarization
+fails, older messages are simply dropped. You'll see a dim
+`context compacted (...)` notice when it happens.
+
+## Permissions
+
+Confirmation prompts accept `y` (yes, once), `n` (no) and `a` (always).
+Choosing `a` stores the tool — or, for `bash`, the exact command as a
+prefix — in `~/.local-code/permissions.yaml`, and it won't ask again.
+Edit that file by hand to shorten prefixes (e.g. leave just `npm test`)
+or revoke grants.
+
+Note that bash prefixes match on raw text, so approving `npm test` also
+covers anything starting with it, including `npm test; rm -rf /`. Keep the
+stored prefixes as specific as you can live with.
+
+## Custom commands
+
+Drop markdown files in `~/.local-code/commands/`. A file named `review.md`
+becomes `/review` in the REPL; `$ARGUMENTS` inside the file is replaced by
+whatever you type after the command:
+
+```markdown
+<!-- ~/.local-code/commands/review.md -->
+Revisá $ARGUMENTS buscando bugs y problemas de estilo.
+```
+
+`/help` lists the custom commands it finds.
 
 ## Configuration
 
@@ -74,6 +109,7 @@ max_iterations: 25
 bash_timeout_seconds: 120
 system_prompt: null
 ollama_host: http://localhost:11434
+context_window: null   # tokens; null = auto-detect from the model
 ```
 
 ## How "any model" works
