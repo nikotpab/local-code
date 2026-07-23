@@ -1,10 +1,11 @@
 # local-code
 
-Agentic coding CLI for **any** local model served by
-[Ollama](https://ollama.com). Models with native tool-calling support use it
-directly; models without it work through a ReAct-style prompt fallback, so
-even older models can drive the agent. Responses render as markdown live in
-the terminal, and the agent keeps a visible todo checklist while it works
+Agentic coding CLI for **any** local model — served by
+[Ollama](https://ollama.com) or by any OpenAI-compatible server (LM Studio,
+llama.cpp, vLLM). Models with native tool-calling support use it directly;
+models without it work through a ReAct-style prompt fallback, so even older
+models can drive the agent. Responses render as markdown live in the
+terminal, and the agent keeps a visible todo checklist while it works
 through multi-step tasks.
 
 ## Install
@@ -22,15 +23,16 @@ local-code                             # interactive REPL with the default model
 local-code --model qwen2.5-coder       # pick a model
 local-code --yolo                      # skip all confirmations (careful)
 local-code --system "sos experto en Rust"
+local-code --backend openai            # force the OpenAI-compatible client
 local-code --resume                    # resume the latest session
 local-code --resume 20260722-153045-a1b2  # resume a specific session
 local-code "arregla el bug en x.py"    # one-shot, no REPL
 ```
 
 REPL commands: `/help` · `/tools` (tool table) · `/history` (current session
-summary) · `/sessions` (saved sessions) · `/clear` (reset history, starts a
-new session) · `/model <name>` (hot-switch model, re-detects tool support) ·
-`/exit`.
+summary) · `/sessions` (saved sessions) · `/undo` (revert the last file
+change) · `/clear` (reset history, starts a new session) · `/model <name>`
+(hot-switch model, re-detects tool support) · `/exit`.
 
 ## Project context
 
@@ -101,6 +103,51 @@ Revisá $ARGUMENTS buscando bugs y problemas de estilo.
 
 `/help` lists the custom commands it finds.
 
+## Backends
+
+By default the host URL decides: one ending in `/v1` uses the
+OpenAI-compatible client, anything else uses Ollama. Force it with
+`--backend ollama|openai` or `backend:` in the config.
+
+```yaml
+ollama_host: http://localhost:1234/v1   # LM Studio, llama.cpp, vLLM…
+backend: openai                          # optional, inferred from the URL
+api_key: null                            # or set LOCAL_CODE_API_KEY
+```
+
+Servers without an `/api/show` endpoint can't advertise tool support, so
+local-code probes once with a dummy tool and caches the answer in
+`~/.local-code/capabilities.json`.
+
+## Undo
+
+Before every `write_file`, `edit_file` or `multi_edit`, the previous
+contents are copied to `~/.local-code/checkpoints/`. `/undo` restores the
+most recent one (or deletes the file, if the agent had just created it).
+Repeat it to walk further back.
+
+## Hooks
+
+Put executable scripts at `~/.local-code/hooks/pre_tool` and
+`~/.local-code/hooks/post_tool`. They receive a JSON payload on stdin
+(`tool`, `arguments`, `cwd`, plus `result` for post) and have 10 seconds to
+answer.
+
+A non-zero exit from `pre_tool` **blocks** the tool, and its stderr is shown
+to the model so it can adjust — use it for rules the model must not talk its
+way around:
+
+```sh
+#!/bin/sh
+# ~/.local-code/hooks/pre_tool — never touch production config
+grep -q '"path": *"[^"]*prod' && { echo "prod files are off limits" >&2; exit 1; }
+exit 0
+```
+
+`post_tool` only observes; its stdout is printed as a note. A hook that
+times out or can't run blocks the tool — a broken guard is treated as a
+closed one.
+
 ## Configuration
 
 `~/.local-code/config.yaml` (all keys optional):
@@ -112,6 +159,8 @@ bash_timeout_seconds: 120
 system_prompt: null
 ollama_host: http://localhost:11434
 context_window: null   # tokens; null = auto-detect from the model
+backend: null          # ollama | openai; null = infer from the host URL
+api_key: null          # for OpenAI-compatible servers; or LOCAL_CODE_API_KEY
 ```
 
 ## How "any model" works
