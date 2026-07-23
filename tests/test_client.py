@@ -5,7 +5,7 @@ import json
 import pytest
 import requests
 
-import local_code.client as client_mod
+import local_code.backends.ollama as client_mod
 from local_code.client import (
     ModelNotFoundError,
     OllamaClient,
