@@ -14,11 +14,13 @@ from rich.text import Text
 
 from local_code import tools
 from local_code.agent import DEFAULT_SYSTEM_PROMPT, Agent, AgentConfig
+from local_code.backends import OllamaError, select_backend
 from local_code.capabilities import CapabilityDetector
-from local_code.client import OllamaClient, OllamaError
+from local_code.checkpoints import CheckpointStore
 from local_code.compaction import Compactor, detect_context_window
 from local_code.config import Config, load_config
 from local_code.custom_commands import list_custom_commands, load_custom_command
+from local_code.hooks import HookRunner
 from local_code.mentions import expand_file_mentions
 from local_code.permissions import PermissionStore
 from local_code.project_context import load_project_context
@@ -34,6 +36,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", help="Model name (default: from ~/.local-code/config.yaml)")
     parser.add_argument("--yolo", action="store_true", help="Skip all tool confirmations")
     parser.add_argument("--system", help="Override the system prompt")
+    parser.add_argument(
+        "--backend",
+        choices=["ollama", "openai"],
+        default=None,
+        help="Force a backend instead of inferring it from the host URL",
+    )
     parser.add_argument(
         "--resume",
         nargs="?",
@@ -66,6 +74,8 @@ def handle_command(line: str) -> tuple[str, str | None]:
         return ("history", None)
     if cmd == "/sessions":
         return ("sessions", None)
+    if cmd == "/undo":
+        return ("undo", None)
     return ("custom", stripped)
 
 
@@ -145,7 +155,7 @@ def make_confirmer(console: Console):
 
 
 def build_agent(
-    client: OllamaClient,
+    client,
     session: Session,
     cfg: Config,
     model: str,
@@ -153,6 +163,7 @@ def build_agent(
     detector: CapabilityDetector,
     console: Console,
     streamer: MarkdownStreamer,
+    checkpoint_store: CheckpointStore,
 ) -> Agent:
     native = detector.supports_tools(model)
     mode = "native tool calling" if native else "ReAct fallback (no native tool support)"
@@ -173,6 +184,7 @@ def build_agent(
         notify=lambda message: console.print(f"[dim]{message}[/dim]"),
     )
     permission_store = PermissionStore()
+    hook_runner = HookRunner()
     return Agent(
         client,
         session,
@@ -186,6 +198,8 @@ def build_agent(
         compactor=compactor,
         permission_store=permission_store,
         on_todos=make_todo_renderer(console),
+        hook_runner=hook_runner,
+        checkpoint_store=checkpoint_store,
     )
 
 
@@ -204,7 +218,7 @@ def save_session(
 
 def help_text() -> str:
     base = (
-        "Comandos: /help · /tools · /history · /sessions · /clear · /model <name> · /exit\n"
+        "Comandos: /help · /tools · /history · /sessions · /undo · /clear · /model <name> · /exit\n"
         "Flags de arranque: --model NAME · --yolo · --system TEXT · --resume [ID]\n"
         "Confirmaciones: y = sí · n = no · a = siempre (se guarda en ~/.local-code/permissions.yaml)\n"
         "Menciones: @ruta/archivo inyecta el contenido del archivo en tu mensaje."
@@ -241,7 +255,7 @@ def print_sessions_table(store: SessionStore, console: Console) -> None:
 
 
 def repl(
-    client: OllamaClient,
+    client,
     session: Session,
     cfg: Config,
     yolo: bool,
@@ -251,6 +265,7 @@ def repl(
     store: SessionStore,
     session_id: str,
     streamer: MarkdownStreamer,
+    checkpoints: CheckpointStore,
 ) -> int:
     console.print("[bold]local-code[/bold] — /help para comandos")
 
@@ -288,7 +303,7 @@ def repl(
                 continue
             try:
                 agent = build_agent(
-                    client, session, cfg, arg, yolo, detector, console, streamer
+                    client, session, cfg, arg, yolo, detector, console, streamer, checkpoints
                 )
             except OllamaError as e:
                 console.print(f"[red]{e}[/red]")
@@ -306,6 +321,9 @@ def repl(
             continue
         if action == "sessions":
             print_sessions_table(store, console)
+            continue
+        if action == "undo":
+            console.print(checkpoints.undo_last())
             continue
         if action == "custom":
             parts = arg.split(maxsplit=1)
@@ -326,7 +344,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     cfg = load_config()
     console = Console()
-    client = OllamaClient(host=cfg.ollama_host)
+    try:
+        client = select_backend(
+            cfg.ollama_host,
+            override=args.backend or cfg.backend,
+            api_key=cfg.api_key,
+        )
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        return 1
     detector = CapabilityDetector(client)
     model = args.model or cfg.default_model
 
@@ -344,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[dim]project context: {ctx_name}[/dim]")
 
     store = SessionStore()
+    checkpoints = CheckpointStore()
     if args.resume is not None:
         resume_id = store.latest_id() if args.resume == "latest" else args.resume
         if resume_id is None:
@@ -368,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
     streamer = MarkdownStreamer(console)
     try:
         agent = build_agent(
-            client, session, cfg, model, args.yolo, detector, console, streamer
+            client, session, cfg, model, args.yolo, detector, console, streamer, checkpoints
         )
     except OllamaError as e:
         console.print(f"[red]{e}[/red]")
@@ -389,5 +416,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     return repl(
-        client, session, cfg, args.yolo, detector, console, agent, store, session_id, streamer
+        client, session, cfg, args.yolo, detector, console, agent, store, session_id, streamer,
+        checkpoints,
     )

@@ -161,3 +161,12 @@ def test_todo_renderer_handles_markup_in_model_text():
     render = make_todo_renderer(Console(file=buf, force_terminal=False))
     render([{"text": "arreglar [/dim] y [bold]", "status": "pending"}])
     assert "[/dim]" in buf.getvalue()
+
+
+def test_parse_args_backend():
+    assert parse_args([]).backend is None
+    assert parse_args(["--backend", "openai"]).backend == "openai"
+
+
+def test_handle_command_undo():
+    assert handle_command("/undo") == ("undo", None)

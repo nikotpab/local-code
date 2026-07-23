@@ -56,3 +56,14 @@ def test_context_window(tmp_path):
     p.write_text("context_window: 32768\n")
     assert load_config(p).context_window == 32768
     assert load_config(tmp_path / "nope.yaml").context_window is None
+
+
+def test_backend_and_api_key(tmp_path):
+    p = tmp_path / "config.yaml"
+    p.write_text("backend: openai\napi_key: sk-test\n")
+    cfg = load_config(p)
+    assert cfg.backend == "openai"
+    assert cfg.api_key == "sk-test"
+    defaults = load_config(tmp_path / "nope.yaml")
+    assert defaults.backend is None
+    assert defaults.api_key is None
