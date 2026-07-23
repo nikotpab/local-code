@@ -116,3 +116,44 @@ def test_retention_trims_oldest(tmp_path):
     index = json.loads((store.dir / "index.json").read_text())
     assert len(index) == MAX_CHECKPOINTS
     assert len(list(store.dir.glob("*.bak"))) == MAX_CHECKPOINTS
+
+
+def test_same_second_snapshots_keep_independent_backups(tmp_path, monkeypatch):
+    """Two snapshots of the same file in the same wall-clock second with the
+    same random token must not clobber each other's backup — undo has to walk
+    back through every distinct version."""
+    target = tmp_path / "a.txt"
+    store = make_store(tmp_path)
+
+    # Freeze both the timestamp and the random token so the OLD id scheme would
+    # have produced one shared "{ts}-dead.bak" for both snapshots.
+    monkeypatch.setattr(
+        "local_code.checkpoints.datetime",
+        type(
+            "D",
+            (),
+            {"now": staticmethod(lambda: __import__("datetime").datetime(2026, 7, 23, 12, 0, 0))},
+        ),
+    )
+    monkeypatch.setattr("local_code.checkpoints.secrets.token_hex", lambda n=4: "dead")
+
+    target.write_text("V0")
+    store.snapshot("edit_file", {"path": str(target)})
+    target.write_text("V1")
+    store.snapshot("edit_file", {"path": str(target)})
+    target.write_text("V2")
+
+    assert store.undo_last() and target.read_text() == "V1"
+    assert store.undo_last() and target.read_text() == "V0"
+
+
+def test_many_rapid_snapshots_have_unique_backups(tmp_path):
+    target = tmp_path / "a.txt"
+    target.write_text("x")
+    store = make_store(tmp_path)
+    ids = set()
+    for _ in range(300):
+        cp = store.snapshot("edit_file", {"path": str(target)})
+        assert cp is not None
+        ids.add(cp.backup)
+    assert len(ids) == 300

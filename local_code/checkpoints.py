@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import secrets
 import shutil
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +29,7 @@ class CheckpointStore:
         self.dir = dir or CHECKPOINTS_DIR
         self.dir.mkdir(parents=True, exist_ok=True)
         self._index: list[Checkpoint] = self._load_index()
+        self._seq = itertools.count()
 
     @property
     def _index_path(self) -> Path:
@@ -68,13 +71,23 @@ class CheckpointStore:
         if not isinstance(raw_path, str) or not raw_path:
             return None
         target = Path(raw_path).resolve()
-        cp_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
+        prefix = datetime.now().strftime("%Y%m%d-%H%M%S") + "-"
         backup: str | None = None
         try:
             if target.is_file():
-                backup_path = self.dir / f"{cp_id}.bak"
+                # Reserve the backup file atomically so a second snapshot in the
+                # same wall-clock second can never overwrite this one's copy —
+                # the OS guarantees the name is unique. The id is that name's
+                # stem so `{id}.bak` still locates the backup.
+                fd, backup_path = tempfile.mkstemp(
+                    prefix=prefix, suffix=".bak", dir=self.dir
+                )
+                os.close(fd)
                 shutil.copy2(target, backup_path)
-                backup = str(backup_path)
+                backup = backup_path
+                cp_id = Path(backup_path).stem
+            else:
+                cp_id = f"{prefix}{secrets.token_hex(4)}-{next(self._seq)}"
             checkpoint = Checkpoint(
                 id=cp_id,
                 path=str(target),
