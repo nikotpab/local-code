@@ -170,3 +170,35 @@ def test_parse_args_backend():
 
 def test_handle_command_undo():
     assert handle_command("/undo") == ("undo", None)
+
+
+def test_build_agent_uses_the_checkpoint_store_it_is_given(tmp_path):
+    """Locks in the shared-instance wiring: /undo in the repl and the agent's
+    snapshots must operate on the SAME CheckpointStore, or undo sees nothing."""
+    import io
+
+    from rich.console import Console
+
+    from local_code.checkpoints import CheckpointStore
+    from local_code.cli import MarkdownStreamer, build_agent
+    from local_code.config import Config
+    from local_code.session import Session
+
+    class FakeDetector:
+        def supports_tools(self, model):
+            return True
+
+    store = CheckpointStore(dir=tmp_path / "cp")
+    console = Console(file=io.StringIO(), force_terminal=False)
+    agent = build_agent(
+        client=object(),
+        session=Session(system_prompt="x"),
+        cfg=Config(),
+        model="m",
+        yolo=True,
+        detector=FakeDetector(),
+        console=console,
+        streamer=MarkdownStreamer(console),
+        checkpoint_store=store,
+    )
+    assert agent.checkpoint_store is store
