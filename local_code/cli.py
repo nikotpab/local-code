@@ -90,7 +90,9 @@ def make_todo_renderer(console: Console):
         lines = "\n".join(
             f"{TODO_ICONS.get(t.get('status'), '?')} {t.get('text', '')}" for t in todos
         )
-        console.print(Panel(lines or "(vacío)", title="todos", border_style="cyan"))
+        console.print(
+            Panel(Text(lines or "(vacío)"), title="todos", border_style="cyan")
+        )
 
     return render
 
@@ -161,7 +163,11 @@ def build_agent(
         bash_timeout=cfg.bash_timeout_seconds,
         yolo=yolo,
     )
-    window = cfg.context_window or detect_context_window(client, model)
+    try:
+        window = int(cfg.context_window) if cfg.context_window else 0
+    except (TypeError, ValueError):
+        window = 0
+    window = window or detect_context_window(client, model)
     compactor = Compactor(
         client, model, window,
         notify=lambda message: console.print(f"[dim]{message}[/dim]"),

@@ -61,8 +61,12 @@ class Compactor:
             return False
         if len(session.history) <= KEEP_RECENT:
             return False
-        old = session.history[:-KEEP_RECENT]
         recent = session.history[-KEEP_RECENT:]
+        # A tool result is meaningless without the assistant tool_calls message
+        # that produced it, so never start the kept slice on one.
+        while recent and recent[0].get("role") == "tool":
+            recent = recent[1:]
+        old = session.history[: len(session.history) - len(recent)]
         try:
             summary = self._summarize(old)
         except Exception:

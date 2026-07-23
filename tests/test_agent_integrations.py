@@ -165,3 +165,23 @@ def test_allow_failure_does_not_abort_execution(tmp_path, monkeypatch):
         confirm=lambda n, p: "always",
     )
     assert written is True
+
+
+def test_malformed_call_does_not_crash_preview(tmp_path, monkeypatch):
+    """A tool call missing required arguments must decline, not kill the turn."""
+    monkeypatch.chdir(tmp_path)
+    seen = []
+    client = FakeClient([
+        tool_call_chunks("bash", {}),
+        text_chunks("no pude"),
+    ])
+
+    def confirm(name, preview):
+        seen.append(preview)
+        return "no"
+
+    agent = make_agent(client, confirm=confirm)
+    agent.run_turn("corré algo")
+    assert "malformed call" in seen[0]
+    tool_msg = [m for m in agent.session.history if m["role"] == "tool"][0]
+    assert tool_msg["content"] == DECLINED

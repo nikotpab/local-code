@@ -150,3 +150,14 @@ def test_todo_renderer_prints(tmp_path):
     out = buf.getvalue()
     assert "paso uno" in out
     assert "hecho" in out
+
+
+def test_todo_renderer_handles_markup_in_model_text():
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    render = make_todo_renderer(Console(file=buf, force_terminal=False))
+    render([{"text": "arreglar [/dim] y [bold]", "status": "pending"}])
+    assert "[/dim]" in buf.getvalue()

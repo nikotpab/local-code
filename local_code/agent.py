@@ -90,7 +90,10 @@ class Agent:
                 except Exception:
                     pre_allowed = False
             if not pre_allowed:
-                preview = tools.get_preview(name, arguments)
+                try:
+                    preview = tools.get_preview(name, arguments)
+                except Exception as e:
+                    preview = f"{name} (malformed call: {type(e).__name__}: {e})"
                 decision = self.confirm(name, preview)
                 if decision is True:
                     decision = "yes"

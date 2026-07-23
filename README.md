@@ -82,9 +82,11 @@ prefix — in `~/.local-code/permissions.yaml`, and it won't ask again.
 Edit that file by hand to shorten prefixes (e.g. leave just `npm test`)
 or revoke grants.
 
-Note that bash prefixes match on raw text, so approving `npm test` also
-covers anything starting with it, including `npm test; rm -rf /`. Keep the
-stored prefixes as specific as you can live with.
+A stored bash prefix only covers commands that continue with plain
+arguments: approving `npm test` also allows `npm test -- --watch`, but not
+`npm testify`, and not anything that chains, pipes, redirects or substitutes
+(`npm test; rm -rf /` still asks). It is still a text match, not a parser —
+grant prefixes you would be comfortable running unattended.
 
 ## Custom commands
 

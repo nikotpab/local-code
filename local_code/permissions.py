@@ -6,6 +6,19 @@ import yaml
 
 PERMISSIONS_PATH = Path.home() / ".local-code" / "permissions.yaml"
 
+# A stored prefix only covers commands that continue with arguments, never ones
+# that chain, redirect or substitute their way into a different command.
+SHELL_BREAKS = (";", "&", "|", "`", "$(", "\n", "\r", ">", "<", "(", ")")
+
+
+def _prefix_covers(prefix: str, command: str) -> bool:
+    if not prefix or not command.startswith(prefix):
+        return False
+    rest = command[len(prefix) :]
+    if rest and not rest[:1].isspace():
+        return False
+    return not any(brk in rest for brk in SHELL_BREAKS)
+
 
 class PermissionStore:
     def __init__(self, path: Path | None = None):
@@ -29,7 +42,9 @@ class PermissionStore:
     def is_allowed(self, tool_name: str, arguments: dict) -> bool:
         if tool_name == "bash":
             command = arguments.get("command", "")
-            return any(command.startswith(p) for p in self.allowed_bash_prefixes)
+            return any(
+                _prefix_covers(p, command) for p in self.allowed_bash_prefixes
+            )
         return tool_name in self.allowed_tools
 
     def allow(self, tool_name: str, arguments: dict) -> None:

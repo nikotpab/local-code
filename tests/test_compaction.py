@@ -99,3 +99,42 @@ def test_falls_back_on_empty_summary():
     compactor = Compactor(client, "m", context_window=1)
     assert compactor.maybe_compact(session) is True
     assert len(session.history) == KEEP_RECENT
+
+
+def make_tool_history() -> Session:
+    """History whose last-KEEP_RECENT slice would start on an orphan tool result."""
+    session = Session(system_prompt="sys")
+    for i in range(3):
+        session.add({"role": "user", "content": f"pedido {i} con bastante texto"})
+        session.add(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": "read_file", "arguments": {}}}],
+            }
+        )
+        session.add({"role": "tool", "tool_name": "read_file", "content": "datos"})
+    session.add({"role": "user", "content": "ultimo pedido con bastante texto"})
+    session.add({"role": "assistant", "content": "respuesta final"})
+    assert session.history[-KEEP_RECENT:][0]["role"] == "tool"
+    return session
+
+
+class ExplodingClient:
+    def chat(self, model, messages, tools=None):
+        raise RuntimeError("boom")
+
+
+def test_truncation_never_starts_on_orphan_tool_message():
+    session = make_tool_history()
+    compactor = Compactor(ExplodingClient(), "m", context_window=1)
+    assert compactor.maybe_compact(session) is True
+    assert session.history[0]["role"] != "tool"
+
+
+def test_summary_path_never_leaves_orphan_tool_message():
+    session = make_tool_history()
+    compactor = Compactor(FakeClient([text_chunks("resumen")]), "m", context_window=1)
+    assert compactor.maybe_compact(session) is True
+    assert session.history[0]["content"].startswith("[Resumen")
+    assert session.history[1]["role"] != "tool"
