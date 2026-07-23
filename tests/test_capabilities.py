@@ -125,3 +125,22 @@ def test_ollama_backend_still_uses_show(tmp_path):
     det = CapabilityDetector(client, cache_path=tmp_path / "caps.json")
     assert det.supports_tools("m") is True
     assert client.show_calls == 1
+
+
+def test_ollama_backend_never_touches_the_disk_cache(tmp_path):
+    """show() is cheap and authoritative, so it is never cached to disk —
+    which also keeps detection hermetic for callers that pass no cache path."""
+    cache = tmp_path / "caps.json"
+    client = FakeShowClient({"capabilities": ["tools"]})
+    client.name = "ollama"
+    det = CapabilityDetector(client, cache_path=cache)
+    assert det.supports_tools("m") is True
+    assert not cache.exists()
+
+
+def test_stale_disk_entry_cannot_override_ollama_show(tmp_path):
+    cache = tmp_path / "caps.json"
+    cache.write_text(json.dumps({"ollama:m": True}))
+    client = FakeShowClient({"capabilities": ["completion"]})
+    client.name = "ollama"
+    assert CapabilityDetector(client, cache_path=cache).supports_tools("m") is False

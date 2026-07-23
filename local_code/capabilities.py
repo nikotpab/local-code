@@ -74,17 +74,19 @@ class CapabilityDetector:
         key = self._key(model)
         if key in self._cache:
             return self._cache[key]
-        # The disk cache exists to spare backends with no /api/show (the
-        # probe path) a real chat round-trip on every run. ollama's show()
-        # is already a cheap, local, authoritative call, so it is always
-        # re-verified rather than trusted from disk; its result is still
-        # written to disk below for completeness.
-        if self._backend_name() != "ollama":
+        # The disk cache exists to spare backends with no /api/show (the probe
+        # path) a real chat round-trip on every run. ollama's show() is already
+        # cheap, local and authoritative, so it is neither read from nor written
+        # to disk — re-verifying also keeps a re-pulled model from being judged
+        # by a stale entry.
+        probes = self._backend_name() != "ollama"
+        if probes:
             disk = self._read_disk()
             if isinstance(disk.get(key), bool):
                 self._cache[key] = disk[key]
                 return disk[key]
         result = self._detect(model)
         self._cache[key] = result
-        self._write_disk(key, result)
+        if probes:
+            self._write_disk(key, result)
         return result
