@@ -44,7 +44,10 @@ class HookRunner:
             proc = self._run("pre_tool", payload)
         except subprocess.TimeoutExpired:
             return HookResult(True, "pre_tool hook timed out")
-        except OSError as e:
+        except Exception as e:
+            # A guard that exists but cannot run is treated as a closed gate:
+            # any launch failure (bad interpreter, invalid timeout, resource
+            # limit) blocks rather than silently letting the tool through.
             return HookResult(True, f"pre_tool hook failed: {e}")
         if proc is None:
             return HookResult(False, "")
@@ -65,7 +68,8 @@ class HookRunner:
         }
         try:
             proc = self._run("post_tool", payload)
-        except (subprocess.TimeoutExpired, OSError):
+        except Exception:
+            # A broken observer must never undo an already-successful turn.
             return ""
         if proc is None or proc.returncode != 0:
             return ""

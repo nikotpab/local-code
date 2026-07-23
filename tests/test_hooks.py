@@ -108,3 +108,31 @@ def test_post_tool_receives_result(tmp_path):
     payload = json.loads(out.read_text())
     assert payload["result"] == "contenido"
     assert payload["hook"] == "post_tool"
+
+
+def test_pre_tool_blocks_on_unexpected_launch_error(tmp_path, monkeypatch):
+    """Any launch failure that is neither timeout nor a missing hook must still
+    fail closed — a guard that cannot run is a closed gate."""
+    hooks = tmp_path / "hooks"
+    write_hook(hooks, "pre_tool", "exit 0\n")
+    runner = HookRunner(dir=hooks)
+
+    def boom(*a, **k):
+        raise MemoryError("out of memory")
+
+    monkeypatch.setattr("local_code.hooks.subprocess.run", boom)
+    result = runner.run_pre_tool("bash", {})
+    assert result.blocked is True
+    assert "failed" in result.message
+
+
+def test_post_tool_swallows_unexpected_launch_error(tmp_path, monkeypatch):
+    hooks = tmp_path / "hooks"
+    write_hook(hooks, "post_tool", "exit 0\n")
+    runner = HookRunner(dir=hooks)
+
+    def boom(*a, **k):
+        raise MemoryError("out of memory")
+
+    monkeypatch.setattr("local_code.hooks.subprocess.run", boom)
+    assert runner.run_post_tool("bash", {}, "x") == ""
