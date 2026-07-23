@@ -30,7 +30,7 @@ def test_override_wins_over_url():
 
 def test_invalid_override():
     with pytest.raises(ValueError, match="ollama"):
-        select_backend("http://x", override="anthropic")
+        select_backend("http://x", override="nonsense")
 
 
 def test_timeout_and_key_propagate():
