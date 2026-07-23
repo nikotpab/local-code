@@ -15,7 +15,11 @@ def _prefix_covers(prefix: str, command: str) -> bool:
     if not prefix or not command.startswith(prefix):
         return False
     rest = command[len(prefix) :]
-    if rest and not rest[:1].isspace():
+    # Only a real shell word separator ends the approved command. Python's
+    # str.isspace() also accepts characters the shell does not split on
+    # (NBSP, vertical tab), which would let the actual argv differ from what
+    # the user approved.
+    if rest and rest[:1] not in (" ", "\t"):
         return False
     return not any(brk in rest for brk in SHELL_BREAKS)
 

@@ -99,3 +99,12 @@ def test_prefix_still_covers_plain_arguments(tmp_path):
     store = make_store(tmp_path, "allowed_bash_prefixes: ['npm test']\n")
     assert store.is_allowed("bash", {"command": "npm test"}) is True
     assert store.is_allowed("bash", {"command": "npm test -- --watch"}) is True
+
+
+def test_prefix_requires_ascii_word_separator(tmp_path):
+    """Unicode/exotic whitespace is not a shell word separator, so it must not
+    count as 'same command plus arguments'."""
+    store = make_store(tmp_path, "allowed_bash_prefixes: ['npm test']\n")
+    for exotic in ["npm test\xa0rm", "npm test rm", "npm test\x0brm"]:
+        assert store.is_allowed("bash", {"command": exotic}) is False, repr(exotic)
+    assert store.is_allowed("bash", {"command": "npm test\targ"}) is True
