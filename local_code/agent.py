@@ -41,6 +41,8 @@ class Agent:
         compactor=None,
         permission_store=None,
         on_todos=None,
+        hook_runner=None,
+        checkpoint_store=None,
     ):
         self.client = client
         self.session = session
@@ -53,6 +55,8 @@ class Agent:
         self.on_stream_end = on_stream_end or (lambda: None)
         self.compactor = compactor
         self.permission_store = permission_store
+        self.hook_runner = hook_runner
+        self.checkpoint_store = checkpoint_store
         self.context = ToolContext(
             bash_timeout=config.bash_timeout, on_todos=on_todos
         )
@@ -106,8 +110,21 @@ class Agent:
                         self.permission_store.allow(name, arguments)
                     except Exception:
                         pass
+        if self.hook_runner is not None:
+            hook = self.hook_runner.run_pre_tool(name, arguments)
+            if hook.blocked:
+                return f"Blocked by hook: {hook.message}"
+            if hook.message:
+                self.notify(hook.message)
+        if self.checkpoint_store is not None:
+            self.checkpoint_store.snapshot(name, arguments)
         self.notify(f"→ {name}({json.dumps(arguments, ensure_ascii=False)[:120]})")
-        return tools.execute(name, arguments, self.context)
+        result = tools.execute(name, arguments, self.context)
+        if self.hook_runner is not None:
+            note = self.hook_runner.run_post_tool(name, arguments, result)
+            if note:
+                self.notify(note)
+        return result
 
     def _run_native(self) -> str:
         schemas = tools.tool_schemas()
