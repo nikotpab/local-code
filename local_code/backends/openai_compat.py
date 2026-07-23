@@ -32,10 +32,72 @@ class OpenAICompatClient:
         key = os.environ.get(API_KEY_ENV) or self.api_key
         return {"Authorization": f"Bearer {key}"} if key else {}
 
+    @staticmethod
+    def _to_openai_messages(messages: list[dict]) -> list[dict]:
+        """Translate our Ollama-shaped history back into OpenAI wire format.
+
+        The agent stores assistant tool calls with dict arguments and no id,
+        and tool results keyed by tool_name. Strict OpenAI-compatible servers
+        (e.g. vLLM) reject that, so on the way out we serialize arguments to a
+        JSON string, add the required id/type, and pair each tool result with
+        its call id in order.
+        """
+        out: list[dict] = []
+        pending_ids: list[str] = []
+        counter = 0
+        for msg in messages:
+            role = msg.get("role")
+            if role == "assistant" and msg.get("tool_calls"):
+                calls = []
+                for call in msg["tool_calls"]:
+                    fn = call.get("function", {})
+                    args = fn.get("arguments", {})
+                    if isinstance(args, (dict, list)):
+                        args = json.dumps(args, ensure_ascii=False)
+                    elif not isinstance(args, str):
+                        args = "{}"
+                    call_id = f"call_{counter}"
+                    counter += 1
+                    pending_ids.append(call_id)
+                    calls.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": fn.get("name", ""), "arguments": args},
+                        }
+                    )
+                out.append(
+                    {
+                        "role": "assistant",
+                        "content": msg.get("content", ""),
+                        "tool_calls": calls,
+                    }
+                )
+            elif role == "tool":
+                if pending_ids:
+                    call_id = pending_ids.pop(0)
+                else:
+                    call_id = f"call_{counter}"
+                    counter += 1
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": msg.get("content", ""),
+                    }
+                )
+            else:
+                out.append(msg)
+        return out
+
     def chat(
         self, model: str, messages: list[dict], tools: list[dict] | None = None
     ) -> Iterator[dict]:
-        payload: dict = {"model": model, "messages": messages, "stream": True}
+        payload: dict = {
+            "model": model,
+            "messages": self._to_openai_messages(messages),
+            "stream": True,
+        }
         if tools is not None:
             payload["tools"] = tools
         try:

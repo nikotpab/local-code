@@ -156,3 +156,93 @@ def test_show_returns_empty(monkeypatch):
 
 def test_name_attribute():
     assert OpenAICompatClient.name == "openai"
+
+
+def test_outbound_plain_messages_pass_through():
+    msgs = [
+        {"role": "system", "content": "sos util"},
+        {"role": "user", "content": "hola"},
+        {"role": "assistant", "content": "hey"},
+    ]
+    assert OpenAICompatClient._to_openai_messages(msgs) == msgs
+
+
+def test_outbound_tool_calls_get_id_type_and_string_arguments():
+    msgs = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "read_file", "arguments": {"path": "x.py"}}}
+            ],
+        }
+    ]
+    out = OpenAICompatClient._to_openai_messages(msgs)
+    call = out[0]["tool_calls"][0]
+    assert call["id"] == "call_0"
+    assert call["type"] == "function"
+    assert call["function"]["name"] == "read_file"
+    assert call["function"]["arguments"] == '{"path": "x.py"}'
+
+
+def test_outbound_tool_result_gets_matching_call_id():
+    msgs = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "read_file", "arguments": {}}}],
+        },
+        {"role": "tool", "tool_name": "read_file", "content": "contenido"},
+    ]
+    out = OpenAICompatClient._to_openai_messages(msgs)
+    assert out[1] == {
+        "role": "tool",
+        "tool_call_id": "call_0",
+        "content": "contenido",
+    }
+    assert "tool_name" not in out[1]
+
+
+def test_outbound_multiple_calls_pair_with_results_in_order():
+    msgs = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "read_file", "arguments": {"path": "a"}}},
+                {"function": {"name": "read_file", "arguments": {"path": "b"}}},
+            ],
+        },
+        {"role": "tool", "tool_name": "read_file", "content": "A"},
+        {"role": "tool", "tool_name": "read_file", "content": "B"},
+    ]
+    out = OpenAICompatClient._to_openai_messages(msgs)
+    assert [c["id"] for c in out[0]["tool_calls"]] == ["call_0", "call_1"]
+    assert out[1]["tool_call_id"] == "call_0" and out[1]["content"] == "A"
+    assert out[2]["tool_call_id"] == "call_1" and out[2]["content"] == "B"
+
+
+def test_outbound_ids_unique_across_multiple_rounds():
+    msgs = [
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "t", "arguments": {}}}]},
+        {"role": "tool", "tool_name": "t", "content": "1"},
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "t", "arguments": {}}}]},
+        {"role": "tool", "tool_name": "t", "content": "2"},
+    ]
+    out = OpenAICompatClient._to_openai_messages(msgs)
+    assert out[0]["tool_calls"][0]["id"] == "call_0"
+    assert out[1]["tool_call_id"] == "call_0"
+    assert out[2]["tool_calls"][0]["id"] == "call_1"
+    assert out[3]["tool_call_id"] == "call_1"
+
+
+def test_chat_sends_translated_messages(monkeypatch):
+    calls = install_post(monkeypatch, FakeSSEResponse(events=["data: [DONE]"]))
+    msgs = [
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "t", "arguments": {"k": 1}}}]},
+        {"role": "tool", "tool_name": "t", "content": "r"},
+    ]
+    list(OpenAICompatClient("http://x/v1").chat("m", msgs))
+    sent = calls[0]["json"]["messages"]
+    assert sent[0]["tool_calls"][0]["function"]["arguments"] == '{"k": 1}'
+    assert sent[1]["tool_call_id"] == "call_0"
