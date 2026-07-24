@@ -108,3 +108,36 @@ def test_defaults_unchanged(tmp_path, monkeypatch):
     _, message = write_turn(tmp_path, monkeypatch)
     assert (tmp_path / "x.txt").read_text() == "nuevo"
     assert message.startswith("Wrote")
+
+
+def test_tool_callbacks_fire_in_order(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "f.txt").write_text("contenido")
+    events = []
+    client = FakeClient([
+        tool_call_chunks("read_file", {"path": "f.txt"}),
+        text_chunks("listo"),
+    ])
+    agent = make_agent(
+        client,
+        on_tool_start=lambda n, a: events.append(("start", n, a)),
+        on_tool_end=lambda n, r: events.append(("end", n, r)),
+    )
+    agent.run_turn("leé f.txt")
+    kinds = [e[0] for e in events]
+    assert kinds == ["start", "end"]
+    assert events[0][1] == "read_file"
+    assert events[0][2] == {"path": "f.txt"}
+    assert events[1][1] == "read_file"
+    assert events[1][2] == "contenido"
+
+
+def test_tool_callbacks_default_noop(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "f.txt").write_text("x")
+    client = FakeClient([
+        tool_call_chunks("read_file", {"path": "f.txt"}),
+        text_chunks("ok"),
+    ])
+    # No on_tool_start/on_tool_end passed — must not raise.
+    assert make_agent(client).run_turn("leé") == "ok"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -54,6 +53,8 @@ class Agent:
         on_todos=None,
         hook_runner=None,
         checkpoint_store=None,
+        on_tool_start: Callable[[str, dict], None] | None = None,
+        on_tool_end: Callable[[str, str], None] | None = None,
     ):
         self.client = client
         self.session = session
@@ -68,6 +69,8 @@ class Agent:
         self.permission_store = permission_store
         self.hook_runner = hook_runner
         self.checkpoint_store = checkpoint_store
+        self.on_tool_start = on_tool_start or (lambda name, arguments: None)
+        self.on_tool_end = on_tool_end or (lambda name, result: None)
         self.context = ToolContext(
             bash_timeout=config.bash_timeout, on_todos=on_todos
         )
@@ -142,8 +145,9 @@ class Agent:
                 self.notify(hook.message)
         if self.checkpoint_store is not None:
             self.checkpoint_store.snapshot(name, arguments)
-        self.notify(f"→ {name}({json.dumps(arguments, ensure_ascii=False)[:120]})")
+        self.on_tool_start(name, arguments)
         result = tools.execute(name, arguments, self.context)
+        self.on_tool_end(name, result)
         if self.hook_runner is not None:
             note = self.hook_runner.run_post_tool(name, arguments, result)
             if note:
