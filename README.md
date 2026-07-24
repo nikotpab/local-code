@@ -93,6 +93,20 @@ directory where you launch `local-code`, its content is appended to the
 system prompt automatically — use it for project conventions, build
 commands, and style rules. Content is capped at 20k characters.
 
+## Environment awareness
+
+The model is given a `# Environment` block with real machine facts — OS, home
+directory, working directory, user, shell, date, git repository — plus the
+**actual** folder names in your home directory. This stops the model from
+inventing localized paths (e.g. writing to `~/Escritorio` instead of the real
+`~/Desktop`). Folder names come from what exists on disk, so it is correct on
+any OS and locale.
+
+As a safety net, if a `write_file` would create a brand-new top-level folder
+under your home directory, the confirmation prompt flags it (`⚠ this would
+create a new folder that doesn't exist`) so you can catch a wrong path before
+approving. Under `--yolo` there is no confirmation, so this check is skipped.
+
 ## Sessions
 
 Every conversation autosaves to `~/.local-code/sessions/<id>.json` after
