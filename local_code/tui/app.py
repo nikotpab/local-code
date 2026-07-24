@@ -139,13 +139,18 @@ class ChatInputArea(TextArea):
         self.submit_callback = submit_callback
 
     def _on_key(self, event) -> None:
-        if event.key == "enter" and not (event.shift or event.alt or event.ctrl):
+        if event.key == "enter":
             event.prevent_default()
             event.stop()
             text = self.text.strip()
             if text and self.submit_callback:
                 self.clear()
                 self.submit_callback(text)
+            return
+        elif event.key in ("shift+enter", "alt+enter", "ctrl+j"):
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
             return
         super()._on_key(event)
 
