@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import sys
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from rich.console import Console
 from rich.panel import Panel
@@ -13,27 +15,68 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich.text import Text
 
-from local_code import tools
-from local_code.agent import DEFAULT_SYSTEM_PROMPT, PLAN_MODE_INSTRUCTION, Agent, AgentConfig
-from local_code.backends import OllamaError, select_backend
+from local_code import __version__, tools, ui
+from local_code.agent import DEFAULT_SYSTEM_PROMPT, Agent, AgentConfig
+from local_code.backends import (
+    ModelNotFoundError,
+    OllamaConnectionError,
+    OllamaError,
+    select_backend,
+)
 from local_code.capabilities import CapabilityDetector
 from local_code.checkpoints import CheckpointStore
-from local_code import ui
 from local_code.compaction import Compactor, detect_context_window, estimate_tokens
-from local_code.config import Config, load_config, load_mcp_server_configs
+from local_code.config import (
+    CONFIG_PATH,
+    Config,
+    load_config,
+    load_mcp_server_configs,
+    validate_config,
+)
 from local_code.custom_commands import list_custom_commands, load_custom_command
 from local_code.environment import environment_block
 from local_code.hooks import HookRunner
+from local_code.logging_setup import configure_logging
 from local_code.mcp import MCPManager
 from local_code.mentions import expand_file_mentions
 from local_code.permissions import PermissionStore
 from local_code.project_context import load_project_context
 from local_code.session import Session
 from local_code.session_store import SessionNotFoundError, SessionStore
-from local_code.tools.context import ToolContext
 
 SUBAGENT_MAX_ITERATIONS = 15
 SUBAGENT_REPORT_MAX_CHARS = 10_000
+
+logger = logging.getLogger(__name__)
+
+# Exit codes. 0/1/2 follow convention (ok / generic error / argparse usage);
+# 130 is the shell's SIGINT convention. Backend failures get distinct codes so
+# scripts can branch on *why* a run failed, not just that it did.
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_INTERRUPTED = 130
+EXIT_CONNECTION = 3
+EXIT_MODEL_NOT_FOUND = 4
+
+
+def exit_code_for(exc: Exception) -> int:
+    """Map a backend exception to a process exit code."""
+    if isinstance(exc, OllamaConnectionError):
+        return EXIT_CONNECTION
+    if isinstance(exc, ModelNotFoundError):
+        return EXIT_MODEL_NOT_FOUND
+    return EXIT_ERROR
+
+
+def report_backend_error(console: Console, exc: Exception) -> int:
+    """Log, print a user-facing message with a hint, and return an exit code."""
+    logger.error("%s: %s", type(exc).__name__, exc, exc_info=True)
+    console.print(f"\n[red]{exc}[/red]")
+    if isinstance(exc, OllamaConnectionError):
+        console.print("[dim]hint: is the model server running? (e.g. `ollama serve`)[/dim]")
+    elif isinstance(exc, ModelNotFoundError):
+        console.print("[dim]hint: pull or pick another model (e.g. `ollama pull <name>`) or use --model[/dim]")
+    return exit_code_for(exc)
 
 SUBAGENT_SYSTEM_PROMPT = (
     "You are a read-only research subagent. "
@@ -67,6 +110,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="local-code",
         description="Agentic coding CLI for any local model served by Ollama",
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Print the version and exit",
+    )
     parser.add_argument("--model", help="Model name (default: from ~/.local-code/config.yaml)")
     parser.add_argument("--yolo", action="store_true", help="Skip all tool confirmations")
     parser.add_argument("--plan", action="store_true", help="Start in plan mode (read-only investigation)")
@@ -86,8 +135,46 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Resume the latest session, or a specific session id",
     )
     parser.add_argument("--no-tui", action="store_true", help="Force line-based REPL interface instead of full-screen TUI")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="One-shot only: emit a JSON result on stdout (diagnostics go to stderr)",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Log INFO-level diagnostics to stderr")
+    parser.add_argument("--debug", action="store_true", help="Log DEBUG-level diagnostics to stderr")
+    parser.add_argument(
+        "--log-file",
+        metavar="PATH",
+        default=None,
+        help="Also write DEBUG-level logs to this file",
+    )
     parser.add_argument("prompt", nargs="*", help="One-shot prompt; omit for interactive REPL")
     return parser.parse_args(argv)
+
+
+def read_piped_stdin() -> str | None:
+    """Return piped stdin content, or None when stdin is an interactive tty.
+
+    Empty/whitespace-only input counts as none so an accidental empty pipe
+    doesn't send a blank prompt.
+    """
+    if sys.stdin.isatty():
+        return None
+    data = sys.stdin.read()
+    return data if data.strip() else None
+
+
+def build_oneshot_text(prompt_args: list[str], stdin_text: str | None) -> str | None:
+    """Combine positional prompt args with piped stdin into one prompt.
+
+    - both present  -> "<prompt>\\n\\n<stdin>" (stdin as trailing context)
+    - only one      -> that one
+    - neither       -> None (fall through to REPL/TUI)
+    """
+    joined = " ".join(prompt_args).strip()
+    if joined and stdin_text:
+        return f"{joined}\n\n{stdin_text}"
+    return joined or stdin_text or None
 
 
 def handle_command(line: str) -> tuple[str, str | None]:
@@ -210,7 +297,11 @@ def build_agent(
         window = 0
     window = window or detect_context_window(client, model)
 
-    eff_notify = notify or (lambda message: console.print(f"\n[dim]{message}[/dim]") if console else (lambda msg: None))
+    def _default_notify(message: str) -> None:
+        if console is not None:
+            console.print(f"\n[dim]{message}[/dim]")
+
+    eff_notify: Callable[[str], None] = notify or _default_notify
     compactor = Compactor(
         client, model, window,
         notify=eff_notify,
@@ -332,7 +423,7 @@ def make_spawn_factory(
     parent_client,
     parent_cfg: Config,
     parent_model: str,
-    console: Console,
+    console: Console | None,
 ):
     """Return a spawn(task, model) -> str factory for subagents.
 
@@ -344,6 +435,10 @@ def make_spawn_factory(
     - streams are silent (no on_token/on_stream_start/on_stream_end)
     - any failure is caught and returned as "Error: ..."
     """
+
+    def say(message: str) -> None:
+        if console is not None:
+            console.print(message)
 
     def spawn(task: str, model: str | None) -> str:
         effective_model = model or parent_model
@@ -370,7 +465,7 @@ def make_spawn_factory(
             except Exception:
                 use_native = False
 
-            console.print(f"\n[dim][subagent: {effective_model}] starting…[/dim]")
+            say(f"\n[dim][subagent: {effective_model}] starting…[/dim]")
 
             sub_agent = Agent(
                 sub_client,
@@ -380,7 +475,7 @@ def make_spawn_factory(
                 # Subagents confirm nothing (plan_mode gate handles it).
                 confirm=lambda name, preview: "yes",
                 on_token=lambda token: None,
-                notify=lambda msg: console.print(f"[dim][subagent] {msg}[/dim]"),
+                notify=lambda msg: say(f"[dim][subagent] {msg}[/dim]"),
                 on_stream_start=lambda: None,
                 on_stream_end=lambda: None,
             )
@@ -390,7 +485,7 @@ def make_spawn_factory(
             result = sub_agent.run_turn(task)
             if len(result) > SUBAGENT_REPORT_MAX_CHARS:
                 result = result[:SUBAGENT_REPORT_MAX_CHARS] + "\n…[truncated]"
-            console.print(f"[dim][subagent: {effective_model}] done[/dim]")
+            say(f"[dim][subagent: {effective_model}] done[/dim]")
             return f"[Subagent report from {effective_model}]\n\n{result}"
         except Exception as exc:
             return f"Error: subagent failed: {type(exc).__name__}: {exc}"
@@ -592,7 +687,7 @@ def repl(
         if action == "undo":
             console.print(checkpoints.undo_last())
             continue
-        if action == "custom":
+        if action == "custom" and arg:
             parts = arg.split(maxsplit=1)
             name = parts[0][1:]
             cmd_args = parts[1] if len(parts) > 1 else ""
@@ -607,16 +702,203 @@ def repl(
         run_chat(arg)
 
 
+CONFIG_USAGE = "usage: local-code config {show|path|validate}"
+
+# Top-level flags and subcommands, single source of truth for shell completion.
+COMPLETION_FLAGS = [
+    "--help", "--version", "--model", "--yolo", "--plan", "--system",
+    "--backend", "--resume", "--no-tui", "--json", "-v", "--verbose",
+    "--debug", "--log-file",
+]
+COMPLETION_SUBCOMMANDS = ["config", "completion"]
+COMPLETION_SHELLS = ("bash", "zsh", "fish")
+COMPLETION_USAGE = "usage: local-code completion {bash|zsh|fish}"
+
+
+def _completion_script(shell: str) -> str:
+    words = " ".join(COMPLETION_FLAGS + COMPLETION_SUBCOMMANDS)
+    if shell == "bash":
+        return (
+            "# local-code bash completion — add to ~/.bashrc:\n"
+            "#   source <(local-code completion bash)\n"
+            "_local_code_complete() {\n"
+            '    local cur="${COMP_WORDS[COMP_CWORD]}"\n'
+            f'    COMPREPLY=( $(compgen -W "{words}" -- "$cur") )\n'
+            "    return 0\n"
+            "}\n"
+            "complete -o default -F _local_code_complete local-code\n"
+        )
+    if shell == "zsh":
+        return (
+            "# local-code zsh completion — add to ~/.zshrc:\n"
+            "#   source <(local-code completion zsh)\n"
+            "_local_code_complete() {\n"
+            f'    local -a opts; opts=({words})\n'
+            "    compadd -- $opts\n"
+            "    _files\n"
+            "}\n"
+            "compdef _local_code_complete local-code\n"
+        )
+    # fish
+    lines = ["# local-code fish completion — save to:",
+             "#   ~/.config/fish/completions/local-code.fish"]
+    for flag in COMPLETION_FLAGS:
+        lines.append(f"complete -c local-code -a '{flag}'")
+    for sub in COMPLETION_SUBCOMMANDS:
+        lines.append(f"complete -c local-code -f -a '{sub}'")
+    return "\n".join(lines) + "\n"
+
+
+def run_completion_command(sub_argv: list[str], console: Console) -> int:
+    """Print a shell completion script to stdout."""
+    if not sub_argv:
+        console.print(f"[red]{COMPLETION_USAGE}[/red]")
+        return 2
+    shell = sub_argv[0]
+    if shell not in COMPLETION_SHELLS:
+        console.print(f"[red]unsupported shell: {shell}[/red]")
+        console.print(f"[dim]{COMPLETION_USAGE}[/dim]")
+        return 2
+    # Print raw (no rich markup) so the script is emitted verbatim.
+    print(_completion_script(shell), end="")
+    return EXIT_OK
+
+
+def run_config_command(sub_argv: list[str], console: Console) -> int:
+    """Handle the `config` subcommand (show / path / validate)."""
+    from dataclasses import asdict
+
+    import yaml
+
+    action = sub_argv[0] if sub_argv else "show"
+
+    if action == "path":
+        console.print(str(CONFIG_PATH))
+        return EXIT_OK
+
+    if action == "show":
+        data = asdict(load_config())
+        if data.get("api_key"):
+            data["api_key"] = "***redacted***"
+        console.print(yaml.safe_dump(data, sort_keys=False, allow_unicode=True).rstrip())
+        exists = CONFIG_PATH.exists()
+        console.print(
+            f"[dim]# source: {CONFIG_PATH}"
+            f"{'' if exists else ' (not found — showing defaults)'}[/dim]"
+        )
+        return EXIT_OK
+
+    if action == "validate":
+        problems = validate_config()
+        if not problems:
+            console.print(f"[green]config OK[/green] [dim]({CONFIG_PATH})[/dim]")
+            return EXIT_OK
+        console.print(f"[red]config has {len(problems)} problem(s):[/red]")
+        for p in problems:
+            console.print(f"  [red]- {p}[/red]")
+        return EXIT_ERROR
+
+    console.print(f"[red]unknown config action: {action}[/red]")
+    console.print(f"[dim]{CONFIG_USAGE}[/dim]")
+    return 2
+
+
+def run_oneshot_json(app_ctx: AppContext, text: str) -> int:
+    """Run a single turn and emit one JSON object on stdout.
+
+    Human-facing diagnostics (mode line, tool activity, warnings) go to a
+    stderr console so stdout carries only the JSON payload — safe to pipe
+    into `jq` or another program.
+    """
+    err_console = Console(stderr=True)
+
+    def emit(payload: dict) -> None:
+        print(json.dumps(payload, ensure_ascii=False))
+
+    try:
+        agent = build_agent(
+            app_ctx.client,
+            app_ctx.session,
+            app_ctx.cfg,
+            app_ctx.model,
+            app_ctx.args.yolo,
+            app_ctx.detector,
+            err_console,
+            streamer=None,
+            checkpoint_store=app_ctx.checkpoints,
+            plan_mode=app_ctx.plan_mode,
+            spawn_factory=app_ctx.spawn_factory,
+        )
+    except OllamaError as e:
+        logger.error("%s: %s", type(e).__name__, e, exc_info=True)
+        emit({"ok": False, "model": app_ctx.model, "error": str(e), "error_type": type(e).__name__})
+        app_ctx.mcp_manager.shutdown()
+        return exit_code_for(e)
+
+    expanded, warnings = expand_file_mentions(text)
+    for w in warnings:
+        err_console.print(f"[dim yellow]{w}[/dim yellow]")
+
+    payload: dict
+    try:
+        result = agent.run_turn(expanded)
+        payload = {
+            "ok": True,
+            "model": app_ctx.model,
+            "session_id": app_ctx.session_id,
+            "response": result,
+        }
+        code = EXIT_OK
+    except KeyboardInterrupt:
+        payload = {"ok": False, "model": app_ctx.model, "error": "interrupted"}
+        code = EXIT_INTERRUPTED
+    except OllamaError as e:
+        logger.error("%s: %s", type(e).__name__, e, exc_info=True)
+        payload = {"ok": False, "model": app_ctx.model, "error": str(e), "error_type": type(e).__name__}
+        code = exit_code_for(e)
+    finally:
+        save_session(app_ctx.store, app_ctx.session_id, app_ctx.model, app_ctx.session, err_console)
+        app_ctx.mcp_manager.shutdown()
+
+    emit(payload)
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] == "config":
+        return run_config_command(raw[1:], Console())
+    if raw and raw[0] == "completion":
+        return run_completion_command(raw[1:], Console())
+
     args = parse_args(argv)
+    logger = configure_logging(
+        debug=getattr(args, "debug", False),
+        verbose=getattr(args, "verbose", False),
+        log_file=getattr(args, "log_file", None),
+    )
+    logger.debug("local-code %s starting (argv=%r)", __version__, argv)
     console = Console()
+
+    stdin_text = read_piped_stdin()
+    oneshot_text = build_oneshot_text(args.prompt, stdin_text)
+
     try:
         app_ctx = setup_app_context(args, console)
     except (ValueError, RuntimeError, SessionNotFoundError) as e:
+        logger.error("startup failed: %s", e, exc_info=True)
         console.print(f"[red]{e}[/red]")
-        return 1
+        return EXIT_ERROR
 
-    use_tui = not bool(args.prompt) and sys.stdout.isatty() and not getattr(args, "no_tui", False)
+    if oneshot_text is not None and getattr(args, "json", False):
+        return run_oneshot_json(app_ctx, oneshot_text)
+
+    if getattr(args, "json", False):
+        console.print("[red]--json requires a one-shot prompt (positional or piped stdin)[/red]")
+        app_ctx.mcp_manager.shutdown()
+        return EXIT_ERROR
+
+    use_tui = oneshot_text is None and sys.stdout.isatty() and not getattr(args, "no_tui", False)
 
     if use_tui:
         from local_code.tui import run_tui
@@ -638,24 +920,28 @@ def main(argv: list[str] | None = None) -> int:
             spawn_factory=app_ctx.spawn_factory,
         )
     except OllamaError as e:
-        console.print(f"[red]{e}[/red]")
+        code = report_backend_error(console, e)
         app_ctx.mcp_manager.shutdown()
-        return 1
+        return code
 
-    if app_ctx.args.prompt:
-        text, warnings = expand_file_mentions(" ".join(app_ctx.args.prompt))
+    if oneshot_text is not None:
+        text, warnings = expand_file_mentions(oneshot_text)
         for w in warnings:
             console.print(f"[dim yellow]{w}[/dim yellow]")
+        code = EXIT_OK
         try:
             agent.run_turn(text)
+        except KeyboardInterrupt:
+            console.print("\n[dim]interrupted[/dim]")
+            code = EXIT_INTERRUPTED
         except OllamaError as e:
-            console.print(f"\n[red]{e}[/red]")
-            return 1
+            code = report_backend_error(console, e)
         finally:
             save_session(app_ctx.store, app_ctx.session_id, app_ctx.model, app_ctx.session, console)
             app_ctx.mcp_manager.shutdown()
-        print()
-        return 0
+        if code == EXIT_OK:
+            print()
+        return code
 
     try:
         return repl(
