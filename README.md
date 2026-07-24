@@ -28,7 +28,55 @@ local-code --resume                    # resume the latest session
 local-code --resume 20260722-153045-a1b2  # resume a specific session
 local-code --no-tui                 # force line-based REPL instead of TUI
 local-code "arregla el bug en x.py"    # one-shot, no REPL
+local-code --version                   # print version and exit
+local-code --debug --log-file run.log  # verbose diagnostics to stderr + file
+local-code --json "resumí @x.py"       # one-shot, JSON result on stdout
+cat error.log | local-code "explicá este stacktrace"   # pipe stdin as input
 ```
+
+Diagnostics flags: `-v`/`--verbose` (INFO to stderr) · `--debug` (DEBUG to
+stderr) · `--log-file PATH` (always DEBUG, appended to the file). Console logs
+go to **stderr**, so stdout stays clean for piping and `--json`.
+
+### One-shot JSON (`--json`)
+
+For scripting, `--json` runs a single turn and prints one JSON object on
+stdout while all human-facing output goes to stderr:
+
+```bash
+$ local-code --json "say hi" | jq .response
+```
+
+Success: `{"ok": true, "model": ..., "session_id": ..., "response": "..."}`.
+Failure: `{"ok": false, "model": ..., "error": ..., "error_type": ...}`.
+
+### Piped stdin
+
+If stdin is not a terminal, its content is read as input. With a positional
+prompt too, stdin is appended as trailing context; alone, it becomes the
+prompt. Piping always runs one-shot (never the REPL/TUI).
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | success |
+| `1` | generic error (bad config, generic backend error) |
+| `2` | usage error (bad flags / unknown subcommand) |
+| `3` | backend connection error (server unreachable) |
+| `4` | model not found |
+| `130` | interrupted (Ctrl+C) |
+
+### Subcommands
+
+```bash
+local-code config path        # print the config file path
+local-code config show        # print effective config (api_key redacted)
+local-code config validate    # check the config file; non-zero on problems
+local-code completion bash    # print a shell-completion script (bash|zsh|fish)
+```
+
+Install completion, e.g. for bash: `source <(local-code completion bash)`.
 
 REPL commands: `/help` · `/tools` (tool table) · `/history` (current session
 summary) · `/sessions` (saved sessions) · `/undo` (revert the last file
@@ -352,5 +400,10 @@ tools are simply absent. A `tools/call` to a dead server returns an
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest
+.venv/bin/ruff check .      # lint
+.venv/bin/mypy              # type-check
+.venv/bin/pytest            # tests
 ```
+
+CI (GitHub Actions) runs all three across Python 3.10–3.13 on every push and
+pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
