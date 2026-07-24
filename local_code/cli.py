@@ -18,9 +18,10 @@ from local_code.backends import OllamaError, select_backend
 from local_code.capabilities import CapabilityDetector
 from local_code.checkpoints import CheckpointStore
 from local_code.compaction import Compactor, detect_context_window
-from local_code.config import Config, load_config
+from local_code.config import Config, load_config, load_mcp_server_configs
 from local_code.custom_commands import list_custom_commands, load_custom_command
 from local_code.hooks import HookRunner
+from local_code.mcp import MCPManager
 from local_code.mentions import expand_file_mentions
 from local_code.permissions import PermissionStore
 from local_code.project_context import load_project_context
@@ -76,6 +77,8 @@ def handle_command(line: str) -> tuple[str, str | None]:
         return ("sessions", None)
     if cmd == "/undo":
         return ("undo", None)
+    if cmd == "/mcp":
+        return ("mcp", None)
     return ("custom", stripped)
 
 
@@ -218,7 +221,7 @@ def save_session(
 
 def help_text() -> str:
     base = (
-        "Comandos: /help · /tools · /history · /sessions · /undo · /clear · /model <name> · /exit\n"
+        "Comandos: /help · /tools · /mcp · /history · /sessions · /undo · /clear · /model <name> · /exit\n"
         "Flags de arranque: --model NAME · --yolo · --system TEXT · --resume [ID]\n"
         "Confirmaciones: y = sí · n = no · a = siempre (se guarda en ~/.local-code/permissions.yaml)\n"
         "Menciones: @ruta/archivo inyecta el contenido del archivo en tu mensaje."
@@ -236,6 +239,19 @@ def print_tools_table(console: Console) -> None:
     table.add_column("confirma")
     for mod in tools.ALL_TOOLS:
         table.add_row(mod.NAME, mod.DESCRIPTION, "Sí" if mod.REQUIRES_CONFIRMATION else "No")
+    console.print(table)
+
+
+def print_mcp_table(console: Console, mcp_manager: MCPManager) -> None:
+    summaries = mcp_manager.server_summaries()
+    if not summaries:
+        console.print("[dim]no MCP servers connected[/dim]")
+        return
+    table = Table(title="MCP servers")
+    table.add_column("server")
+    table.add_column("tools")
+    for s in summaries:
+        table.add_row(s["name"], str(s["tool_count"]))
     console.print(table)
 
 
@@ -266,6 +282,7 @@ def repl(
     session_id: str,
     streamer: MarkdownStreamer,
     checkpoints: CheckpointStore,
+    mcp_manager: MCPManager,
 ) -> int:
     console.print("[bold]local-code[/bold] — /help para comandos")
 
@@ -313,6 +330,9 @@ def repl(
             continue
         if action == "tools":
             print_tools_table(console)
+            continue
+        if action == "mcp":
+            print_mcp_table(console, mcp_manager)
             continue
         if action == "history":
             console.print(
@@ -369,17 +389,29 @@ def main(argv: list[str] | None = None) -> int:
         base_system = f"{base_system}\n\n# Project context ({ctx_name})\n\n{ctx_content}"
         console.print(f"[dim]project context: {ctx_name}[/dim]")
 
+    # Start MCP servers
+    mcp_manager = MCPManager(notify=lambda msg: console.print(msg))
+    mcp_configs = load_mcp_server_configs()
+    if mcp_configs:
+        mcp_manager.start(mcp_configs)
+        adapters = mcp_manager.tool_adapters
+        if adapters:
+            from local_code import tools as _tools
+            _tools.register_mcp_tools(adapters)
+
     store = SessionStore()
     checkpoints = CheckpointStore()
     if args.resume is not None:
         resume_id = store.latest_id() if args.resume == "latest" else args.resume
         if resume_id is None:
             console.print("[red]No hay sesiones guardadas para retomar.[/red]")
+            mcp_manager.shutdown()
             return 1
         try:
             data = store.load(resume_id)
         except SessionNotFoundError as e:
             console.print(f"[red]{e}[/red]")
+            mcp_manager.shutdown()
             return 1
         session = Session(system_prompt=data.get("system_prompt") or base_system)
         session.history.extend(data.get("history", []))
@@ -399,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except OllamaError as e:
         console.print(f"[red]{e}[/red]")
+        mcp_manager.shutdown()
         return 1
 
     if args.prompt:
@@ -412,10 +445,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         finally:
             save_session(store, session_id, model, session, console)
+            mcp_manager.shutdown()
         print()
         return 0
 
-    return repl(
-        client, session, cfg, args.yolo, detector, console, agent, store, session_id, streamer,
-        checkpoints,
-    )
+    try:
+        return repl(
+            client, session, cfg, args.yolo, detector, console, agent, store, session_id,
+            streamer, checkpoints, mcp_manager,
+        )
+    finally:
+        mcp_manager.shutdown()

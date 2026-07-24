@@ -183,6 +183,82 @@ as typing them into your own shell. Confirmations are the only guardrail;
 `--yolo` removes even that. Don't point this at repos you don't trust, and
 read every command before approving it.
 
+## MCP (Model Context Protocol) servers
+
+local-code can expose tools from external MCP servers — GitHub, Postgres,
+filesystem, Brave Search, and anything else that speaks the stdio MCP protocol
+— alongside its built-in tools, with no extra code.
+
+### Config: `~/.local-code/mcp.json`
+
+Create this file (same shape as Claude Desktop uses):
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": {}
+    },
+    "github": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "ghcr.io/github/github-mcp-server"],
+      "env": { "GITHUB_TOKEN": "ghp_..." }
+    }
+  }
+}
+```
+
+On startup local-code spawns each listed server, performs the MCP
+`initialize` handshake, and calls `tools/list` to discover available tools.
+A missing or malformed `mcp.json` is silently ignored — the CLI works
+normally with zero MCP servers.
+
+### Tool namespacing
+
+Every MCP tool is exposed to the model as `{server}__{tool}` (double
+underscore), so `filesystem`'s `read_file` becomes `filesystem__read_file`.
+This prevents any collision with local built-in tools or between servers.
+The tool description shown to the model notes the originating server.
+
+### Confirmation
+
+MCP tools require confirmation by default (they call external processes that
+may have side effects). Add `"trust": true` to a server entry to skip
+confirmation for that server:
+
+```json
+"filesystem": {
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+  "trust": true
+}
+```
+
+Trust is per-server; other servers still ask.
+
+### `/mcp` command
+
+In the REPL, `/mcp` lists the connected servers and how many tools each
+exposes:
+
+```
+┌──────────────┬───────┐
+│ server       │ tools │
+├──────────────┼───────┤
+│ filesystem   │ 7     │
+│ github       │ 23    │
+└──────────────┴───────┘
+```
+
+### Graceful degradation
+
+A server that fails to start, times out during the handshake, or dies
+mid-session never crashes the CLI. A dim warning is shown and the server's
+tools are simply absent. A `tools/call` to a dead server returns an
+`"Error: …"` string to the model instead of raising.
+
 ## Development
 
 ```bash

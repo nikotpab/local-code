@@ -5,21 +5,24 @@ from local_code.tools import ToolContext
 
 CTX = ToolContext()
 
+LOCAL_TOOL_NAMES = {
+    "bash",
+    "edit_file",
+    "glob",
+    "grep",
+    "list_dir",
+    "multi_edit",
+    "read_file",
+    "set_todos",
+    "web_fetch",
+    "write_file",
+}
+
 
 def test_all_tools_registered():
     names = {t.NAME for t in tools.ALL_TOOLS}
-    assert names == {
-        "bash",
-        "edit_file",
-        "glob",
-        "grep",
-        "list_dir",
-        "multi_edit",
-        "read_file",
-        "set_todos",
-        "web_fetch",
-        "write_file",
-    }
+    # All 10 built-in tools must be present; MCP adapters may also be registered.
+    assert LOCAL_TOOL_NAMES.issubset(names)
 
 
 def test_get_tool():
@@ -38,7 +41,10 @@ def test_requires_confirmation():
 
 def test_tool_schemas_ollama_format():
     schemas = tools.tool_schemas()
-    assert len(schemas) == 10
+    # Must have at least the 10 built-in tools; MCP adapters may add more.
+    assert len(schemas) >= 10
+    local_schemas = [s for s in schemas if s["function"]["name"] in LOCAL_TOOL_NAMES]
+    assert len(local_schemas) == 10
     for s in schemas:
         assert s["type"] == "function"
         fn = s["function"]
