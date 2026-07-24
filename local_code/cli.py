@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from pathlib import Path
 
 from rich.console import Console
-from rich.live import Live
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
@@ -16,7 +15,8 @@ from local_code.agent import DEFAULT_SYSTEM_PROMPT, PLAN_MODE_INSTRUCTION, Agent
 from local_code.backends import OllamaError, select_backend
 from local_code.capabilities import CapabilityDetector
 from local_code.checkpoints import CheckpointStore
-from local_code.compaction import Compactor, detect_context_window
+from local_code import ui
+from local_code.compaction import Compactor, detect_context_window, estimate_tokens
 from local_code.config import Config, load_config, load_mcp_server_configs
 from local_code.custom_commands import list_custom_commands, load_custom_command
 from local_code.environment import environment_block
@@ -128,31 +128,6 @@ def make_todo_renderer(console: Console):
     return render
 
 
-class MarkdownStreamer:
-    def __init__(self, console: Console):
-        self.console = console
-        self.buffer = ""
-        self._live: Live | None = None
-
-    def start(self) -> None:
-        self.buffer = ""
-        self._live = Live(
-            Markdown(""), console=self.console, refresh_per_second=10
-        )
-        self._live.start()
-
-    def token(self, token: str) -> None:
-        if self._live is None:
-            return
-        self.buffer += token
-        self._live.update(Markdown(self.buffer))
-
-    def end(self) -> None:
-        if self._live is not None:
-            self._live.stop()
-            self._live = None
-
-
 def history_summary(session_id: str, model: str, history: list[dict]) -> str:
     if not history:
         return f"session {session_id} · model {model} · empty"
@@ -183,7 +158,7 @@ def build_agent(
     yolo: bool,
     detector: CapabilityDetector,
     console: Console,
-    streamer: MarkdownStreamer,
+    streamer: ui.ResponseView,
     checkpoint_store: CheckpointStore,
     plan_mode: bool = False,
     spawn_factory=None,
@@ -225,6 +200,8 @@ def build_agent(
         on_todos=make_todo_renderer(console),
         hook_runner=hook_runner,
         checkpoint_store=checkpoint_store,
+        on_tool_start=lambda n, a: ui.render_tool_start(console, n, a),
+        on_tool_end=lambda n, r: ui.render_tool_end(console, n, r),
     )
     # Wire the subagent spawn factory into the agent's ToolContext.
     if spawn_factory is not None:
@@ -389,14 +366,21 @@ def repl(
     agent: Agent,
     store: SessionStore,
     session_id: str,
-    streamer: MarkdownStreamer,
+    streamer: ui.ResponseView,
     checkpoints: CheckpointStore,
     mcp_manager: MCPManager,
     plan_mode: bool = False,
     spawn_factory=None,
 ) -> int:
-    plan_suffix = " [plan mode]" if plan_mode else ""
-    console.print(f"[bold]local-code[/bold]{plan_suffix} — /help para comandos")
+    native = getattr(agent, "use_native", False)
+    ui.render_banner(
+        console,
+        agent.config.model,
+        getattr(client, "name", "?"),
+        native,
+        ui.shorten_path(str(Path.cwd()), str(Path.home())),
+        agent.config.plan_mode,
+    )
 
     def run_chat(text: str) -> None:
         nonlocal session_id
@@ -414,9 +398,20 @@ def repl(
         save_session(store, session_id, agent.config.model, session, console)
 
     while True:
+        window = agent.compactor.context_window if agent.compactor is not None else 0
+        console.print(
+            ui.status_line(
+                agent.config.model,
+                ui.shorten_path(str(Path.cwd()), str(Path.home())),
+                estimate_tokens(session.messages),
+                window,
+                agent.config.plan_mode,
+            ),
+            style="dim",
+        )
         plan_indicator = "[plan] " if agent.config.plan_mode else ""
         try:
-            line = console.input(f"\n[bold cyan]{plan_indicator}> [/bold cyan]")
+            line = console.input(f"[bold cyan]{plan_indicator}> [/bold cyan]")
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
@@ -563,7 +558,7 @@ def main(argv: list[str] | None = None) -> int:
     # Build the subagent spawn factory.
     spawn_factory = make_spawn_factory(client, cfg, model, console)
 
-    streamer = MarkdownStreamer(console)
+    streamer = ui.ResponseView(console)
     try:
         agent = build_agent(
             client, session, cfg, model, args.yolo, detector, console, streamer, checkpoints,

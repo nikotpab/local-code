@@ -3,13 +3,13 @@ from __future__ import annotations
 from local_code.cli import (
     CONFIRM_CHOICES,
     TODO_ICONS,
-    MarkdownStreamer,
     handle_command,
     history_summary,
     make_todo_renderer,
     parse_args,
     style_preview_lines,
 )
+from local_code.ui import ResponseView
 
 
 def test_parse_args_defaults():
@@ -92,21 +92,20 @@ def test_history_summary_counts_roles():
     assert out == "session s1 · model qwen · 3 messages (assistant: 1, user: 2)"
 
 
-def test_markdown_streamer_lifecycle():
+def test_response_view_resets_buffer_on_start():
     import io
 
     from rich.console import Console
 
-    streamer = MarkdownStreamer(Console(file=io.StringIO(), force_terminal=False))
-    streamer.token("ignored before start")
-    streamer.start()
-    streamer.token("# hola\n")
-    streamer.token("mundo")
-    assert streamer.buffer == "# hola\nmundo"
-    streamer.end()
-    streamer.start()
-    assert streamer.buffer == ""
-    streamer.end()
+    view = ResponseView(Console(file=io.StringIO(), force_terminal=False))
+    view.start()
+    view.token("# hola\n")
+    view.token("mundo")
+    assert view.buffer == "# hola\nmundo"
+    view.end()
+    view.start()
+    assert view.buffer == ""
+    view.end()
 
 
 def test_smoke_help_exits_zero():
@@ -180,7 +179,7 @@ def test_build_agent_uses_the_checkpoint_store_it_is_given(tmp_path):
     from rich.console import Console
 
     from local_code.checkpoints import CheckpointStore
-    from local_code.cli import MarkdownStreamer, build_agent
+    from local_code.cli import build_agent
     from local_code.config import Config
     from local_code.session import Session
 
@@ -198,7 +197,7 @@ def test_build_agent_uses_the_checkpoint_store_it_is_given(tmp_path):
         yolo=True,
         detector=FakeDetector(),
         console=console,
-        streamer=MarkdownStreamer(console),
+        streamer=ResponseView(console),
         checkpoint_store=store,
     )
     assert agent.checkpoint_store is store
