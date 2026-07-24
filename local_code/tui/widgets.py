@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Callable
 
@@ -14,6 +13,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Markdown, Static, TextArea
 
 from local_code.cli import CONFIRM_CHOICES, TODO_ICONS, style_preview_lines
+from local_code import ui
 from local_code.ui import shorten_path
 
 
@@ -40,14 +40,14 @@ class HeaderBar(Static):
         self.update_content()
 
     def update_content(self) -> None:
-        plan_str = " · [bold yellow][plan][/bold yellow]" if self.plan_mode else ""
+        plan_str = " · [$accent]plan[/$accent]" if self.plan_mode else ""
         content = (
-            f"[bold cyan]local-code[/bold cyan] · "
-            f"model: [bold white]{self.model}[/bold white] · "
-            f"backend: {self.backend} ({self.mode}) · "
-            f"ctx: {self.context_usage}"
-            f"{plan_str} · "
-            f"[dim]{self.cwd}[/dim]"
+            f"[b $accent]local-code[/] "
+            f"[dim]·[/] {self.model} "
+            f"[dim]·[/] [dim]{self.backend} ({self.mode})[/dim] "
+            f"[dim]·[/] [dim]ctx {self.context_usage}[/dim]"
+            f"{plan_str} "
+            f"[dim]·[/] [dim]{self.cwd}[/dim]"
         )
         self.update(content)
 
@@ -86,14 +86,14 @@ class ConversationPane(VerticalScroll):
 
     def add_user_message(self, text: str) -> None:
         self.show_thinking(False)
-        widget = Static(f"[bold cyan]USER>[/bold cyan] {text}")
+        widget = Static(f"[b $accent]›[/] {text}")
         self.mount(widget)
         self.scroll_end(animate=False)
 
     def show_thinking(self, show: bool = True) -> None:
         if show:
             if self._thinking_widget is None:
-                self._thinking_widget = Static("[dim italic]Thinking…[/dim italic]")
+                self._thinking_widget = Static("[dim italic]pensando…[/dim italic]")
                 self.mount(self._thinking_widget)
                 self.scroll_end(animate=False)
         else:
@@ -124,22 +124,26 @@ class ConversationPane(VerticalScroll):
 
     def add_tool_start(self, name: str, arguments: dict) -> None:
         self.show_thinking(False)
-        arg_str = json.dumps(arguments, ensure_ascii=False)
-        if len(arg_str) > 100:
-            arg_str = arg_str[:100] + "…"
-        widget = Static(f"[dim yellow]⚡ {name}({arg_str})[/dim yellow]")
-        self.mount(widget)
+        icon = ui.tool_icon(name)
+        args = ui.short_args(name, arguments)
+        line = f"[$accent]{icon}[/] [$accent]{name}[/]"
+        if args:
+            line += f"  [dim]{args}[/dim]"
+        self.mount(Static(line))
         self.scroll_end(animate=False)
 
     def add_tool_end(self, name: str, result: str) -> None:
         self.show_thinking(False)
-        if result.startswith("Error:"):
-            styled = f"[bold red]└─ {result}[/bold red]"
+        summary = result.splitlines()[0] if result else "ok"
+        if len(summary) > 100:
+            summary = summary[:100] + "…"
+        lowered = summary.lower()
+        if lowered.startswith("error") or "declined" in lowered:
+            styled = f"  [dim red]↳ {summary}[/dim red]"
+        elif lowered.startswith("blocked"):
+            styled = f"  [dim yellow]↳ {summary}[/dim yellow]"
         else:
-            first_line = result.splitlines()[0] if result else "ok"
-            if len(first_line) > 100:
-                first_line = first_line[:100] + "…"
-            styled = f"[dim]  └─ {first_line}[/dim]"
+            styled = f"  [dim]↳ {summary}[/dim]"
         self.mount(Static(styled))
         self.scroll_end(animate=False)
 
@@ -163,15 +167,20 @@ class ConversationPane(VerticalScroll):
 class ActivityPane(Container):
     """Side panel displaying set_todos checklist, recent code diff, and MCP status."""
 
+    _HEAD = "[b $accent]{}[/]"
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._todos_widget = Static("[dim]📋 Todos: (empty)[/dim]")
-        self._diff_widget = Static("[dim]📝 Diff: (none)[/dim]")
-        self._mcp_widget = Static("[dim]🔌 MCP: 0 servers[/dim]")
+        self._todos_widget = Static(self._section("Todos", "[dim]—[/dim]"))
+        self._diff_widget = Static(self._section("Diff", "[dim]—[/dim]"))
+        self._mcp_widget = Static(self._section("MCP", "[dim]no servers[/dim]"))
+
+    def _section(self, title: str, body: str) -> str:
+        return f"{self._HEAD.format(title.upper())}\n{body}"
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Static("[bold yellow]Activity Panel[/bold yellow] [dim](Ctrl+B toggle)[/dim]\n"),
+            Static("[dim]ACTIVITY[/dim]  [dim]ctrl+b[/dim]\n"),
             self._todos_widget,
             Static("\n"),
             self._diff_widget,
@@ -182,28 +191,28 @@ class ActivityPane(Container):
 
     def update_todos(self, todos: list) -> None:
         if not todos:
-            self._todos_widget.update("[dim]📋 Todos: (empty)[/dim]")
+            self._todos_widget.update(self._section("Todos", "[dim]—[/dim]"))
             return
-        lines = ["[bold yellow]📋 Todos:[/bold yellow]"]
+        lines = []
         for t in todos:
             status = t.get("status", "pending")
             icon = TODO_ICONS.get(status, "☐")
             text = t.get("text", "")
             if status == "done":
-                lines.append(f"  [green]{icon} {text}[/green]")
-            elif status == "in_progress":
-                lines.append(f"  [cyan]{icon} {text}[/cyan]")
-            else:
                 lines.append(f"  [dim]{icon} {text}[/dim]")
-        self._todos_widget.update("\n".join(lines))
+            elif status == "in_progress":
+                lines.append(f"  [$accent]{icon} {text}[/]")
+            else:
+                lines.append(f"  {icon} {text}")
+        self._todos_widget.update(self._section("Todos", "\n".join(lines)))
 
     def update_diff(self, preview_text: str) -> None:
         if not preview_text.strip():
-            self._diff_widget.update("[dim]📝 Diff: (none)[/dim]")
+            self._diff_widget.update(self._section("Diff", "[dim]—[/dim]"))
             return
-        lines = ["[bold yellow]📝 Latest Diff / Preview:[/bold yellow]"]
+        lines = []
         styled_lines = style_preview_lines(preview_text)
-        for line, style in styled_lines[:40]:  # limit lines for pane
+        for line, style in styled_lines[:40]:
             if style == "green":
                 lines.append(f"[green]{line}[/green]")
             elif style == "red":
@@ -211,15 +220,15 @@ class ActivityPane(Container):
             else:
                 lines.append(f"[dim]{line}[/dim]")
         if len(styled_lines) > 40:
-            lines.append("[dim]… [truncated][/dim]")
-        self._diff_widget.update("\n".join(lines))
+            lines.append("[dim]…[/dim]")
+        self._diff_widget.update(self._section("Diff", "\n".join(lines)))
 
     def update_mcp(self, summaries: list[dict]) -> None:
         if not summaries:
-            self._mcp_widget.update("[dim]🔌 MCP: 0 servers[/dim]")
+            self._mcp_widget.update(self._section("MCP", "[dim]no servers[/dim]"))
             return
-        parts = [f"{s['name']}: {s['tool_count']} tools" for s in summaries]
-        self._mcp_widget.update(f"[bold yellow]🔌 MCP:[/bold yellow] " + ", ".join(parts))
+        parts = [f"{s['name']} ({s['tool_count']})" for s in summaries]
+        self._mcp_widget.update(self._section("MCP", "[dim]" + ", ".join(parts) + "[/dim]"))
 
 
 class ConfirmationModal(ModalScreen[str]):
@@ -250,7 +259,7 @@ class ConfirmationModal(ModalScreen[str]):
             styled_text.append(line + "\n", style=style)
 
         yield Container(
-            Label(f"[bold yellow]Run tool '{self.tool_name}'?[/bold yellow]", id="modal_title"),
+            Label(f"Run [b $accent]{self.tool_name}[/]?", id="modal_title"),
             Static(styled_text, id="modal_preview"),
             Horizontal(
                 Button("Yes (y)", variant="success", id="btn_yes"),

@@ -65,7 +65,7 @@ HeaderBar {
 #conv_container {
     width: 1fr;
     height: 1fr;
-    border: solid $accent;
+    border: round $panel;
     margin: 0;
 }
 
@@ -78,7 +78,7 @@ ConversationPane {
 #activity_container {
     width: 38;
     height: 1fr;
-    border: solid $primary;
+    border: round $panel;
     padding: 0 1;
 }
 
@@ -94,14 +94,14 @@ ConversationPane {
 
 #input_box {
     height: 1fr;
-    border: solid $accent;
+    border: round $panel;
 }
 
 #modal_dialog {
     width: 70;
     height: auto;
     max-height: 80%;
-    border: thick $warning;
+    border: round $accent;
     background: $surface;
     padding: 1 2;
     align: center middle;
@@ -186,6 +186,7 @@ class LocalCodeApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.theme = "nord"
         self._init_agent()
         self._update_header()
         self._update_activity_mcp()
