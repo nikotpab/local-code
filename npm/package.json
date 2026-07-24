@@ -1,0 +1,27 @@
+{
+  "name": "local-code",
+  "version": "0.1.0",
+  "description": "Node bootstrapper for local-code, an agentic coding CLI for local models (Ollama / OpenAI-compatible). Installs and runs the Python package in an isolated venv.",
+  "bin": {
+    "local-code": "bin/cli.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "cli",
+    "agent",
+    "ollama",
+    "llm",
+    "coding-assistant"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nikotpab/local-code.git"
+  },
+  "homepage": "https://github.com/nikotpab/local-code#readme"
+}

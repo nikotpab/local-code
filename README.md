@@ -10,11 +10,46 @@ through multi-step tasks.
 
 ## Install
 
+One-line install (installs the CLI with pipx, or pip as a fallback):
+
+**macOS / Linux** — curl:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nikotpab/local-code/main/install.sh | bash
+```
+
+**Windows** — PowerShell (`irm`):
+
+```powershell
+irm https://raw.githubusercontent.com/nikotpab/local-code/main/install.ps1 | iex
+```
+
+**Node** (any OS) — `npm`/`npx` bootstrap the Python package into an isolated
+venv on first run:
+
+```bash
+npm install -g local-code     # then: local-code
+# or, no global install:
+npx local-code
+```
+
+**From source** (development):
+
 ```bash
 pipx install -e .        # or: pip install -e .
 ```
 
-Requires Python ≥ 3.10 and a running Ollama (`ollama serve`).
+All installers require **Python ≥ 3.10** and a running model server (e.g.
+`ollama serve`). They accept overrides via environment variables —
+`LOCAL_CODE_REF` (branch/tag), `LOCAL_CODE_REPO`, or `LOCAL_CODE_PYPI` (install
+from PyPI once published):
+
+```bash
+LOCAL_CODE_REF=feat/tui curl -fsSL https://raw.githubusercontent.com/nikotpab/local-code/main/install.sh | bash
+```
+
+> The `curl`/`irm` one-liners require the repo to be public on GitHub, and the
+> npm command requires the `local-code` package to be published to npm.
 
 ## Usage
 

@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- One-line installers: `install.sh` (curl, macOS/Linux), `install.ps1` (irm,
+  Windows), and an npm/npx Node bootstrapper under `npm/` that installs the
+  Python package into an isolated venv. All honor `LOCAL_CODE_REPO`,
+  `LOCAL_CODE_REF`, and `LOCAL_CODE_PYPI` overrides.
 - `/models` command (and bare `/model`): lists locally installed Ollama models
   and lets you pick one by number or name. The models directory is discovered
   per OS (`~/.ollama/models`, the Linux system-service path, or `$OLLAMA_MODELS`),

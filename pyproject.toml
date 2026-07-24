@@ -32,9 +32,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/nicolasbarbosa/local-code"
-Repository = "https://github.com/nicolasbarbosa/local-code"
-Changelog = "https://github.com/nicolasbarbosa/local-code/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/nikotpab/local-code"
+Repository = "https://github.com/nikotpab/local-code"
+Changelog = "https://github.com/nikotpab/local-code/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.10"]
