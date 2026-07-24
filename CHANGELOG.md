@@ -7,6 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `/models` command (and bare `/model`): lists locally installed Ollama models
+  and lets you pick one by number or name. The models directory is discovered
+  per OS (`~/.ollama/models`, the Linux system-service path, or `$OLLAMA_MODELS`),
+  and names are reconstructed from Ollama's manifest tree.
 - `--version` flag.
 - Real logging: `--verbose`/`-v`, `--debug`, and `--log-file PATH` (console
   logs go to stderr; a log file always captures DEBUG).

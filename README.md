@@ -80,9 +80,28 @@ Install completion, e.g. for bash: `source <(local-code completion bash)`.
 
 REPL commands: `/help` · `/tools` (tool table) · `/history` (current session
 summary) · `/sessions` (saved sessions) · `/undo` (revert the last file
-change) · `/clear` (reset history, starts a new session) · `/model <name>`
-(hot-switch model, re-detects tool support) · `/plan` (toggle plan mode) ·
-`/approve` (execute the current plan) · `/mcp` (MCP server status) · `/exit`.
+change) · `/clear` (reset history, starts a new session) · `/models` (list
+locally installed Ollama models and pick one) · `/model [name]` (hot-switch
+model, re-detects tool support; no name opens the picker) · `/plan` (toggle
+plan mode) · `/approve` (execute the current plan) · `/mcp` (MCP server
+status) · `/exit`.
+
+## Choosing a model
+
+`/models` (or bare `/model`) lists the models Ollama has already downloaded
+and lets you pick one by number or name. The model directory is detected from
+your OS:
+
+| OS | Location |
+|---|---|
+| macOS / Windows / Linux (user install) | `~/.ollama/models` |
+| Linux (system service) | `/usr/share/ollama/.ollama/models` |
+| any, when set | `$OLLAMA_MODELS` (overrides the above) |
+
+Names are reconstructed from Ollama's manifest tree, so they match what
+`ollama list` shows (e.g. `qwen2.5-coder:latest`, `hf.co/user/repo:Q4_K_M`).
+Picking a model hot-switches it and re-detects native tool support. You can
+still type a name the scan missed — it's trusted verbatim.
 
 ## TUI (Full-Screen Interface)
 

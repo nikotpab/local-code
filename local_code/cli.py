@@ -187,6 +187,8 @@ def handle_command(line: str) -> tuple[str, str | None]:
         return ("clear", None)
     if cmd == "/exit":
         return ("exit", None)
+    if cmd == "/models":
+        return ("models", None)
     if cmd == "/model":
         return ("model", arg)
     if cmd == "/help":
@@ -509,10 +511,11 @@ def save_session(
 def help_text() -> str:
     base = (
         "Comandos: /help · /tools · /mcp · /plan · /approve · "
-        "/history · /sessions · /undo · /clear · /model <name> · /exit\n"
+        "/history · /sessions · /undo · /clear · /models · /model [name] · /exit\n"
         "Flags de arranque: --model NAME · --yolo · --plan · --system TEXT · --resume [ID]\n"
         "Confirmaciones: y = sí · n = no · a = siempre (se guarda en ~/.local-code/permissions.yaml)\n"
         "Menciones: @ruta/archivo inyecta el contenido del archivo en tu mensaje.\n"
+        "/models — list local Ollama models (auto-detected per OS) and pick one\n"
         "/plan  — toggle plan mode (read-only investigation + numbered plan output)\n"
         "/approve — execute the last plan: turns off plan mode and re-runs the last assistant message"
     )
@@ -520,6 +523,68 @@ def help_text() -> str:
     if customs:
         base += "\nCustom: " + " · ".join(f"/{c}" for c in customs)
     return base
+
+
+def resolve_model_choice(choice: str, names: list[str]) -> str | None:
+    """Resolve a picker input to a model name.
+
+    A numeric choice selects by 1-based index (None if out of range). Any
+    other non-empty string is trusted as a model name verbatim, so a user can
+    type a name discovery may have missed.
+    """
+    choice = choice.strip()
+    if not choice:
+        return None
+    if choice.isdigit():
+        idx = int(choice) - 1
+        return names[idx] if 0 <= idx < len(names) else None
+    return choice
+
+
+def _is_current_model(name: str, current: str) -> bool:
+    return name == current or name.rsplit(":", 1)[0] == current
+
+
+def render_models_table(
+    console: Console, names: list[str], current: str, models_dir
+) -> None:
+    table = Table(title=f"local Ollama models ({models_dir})")
+    table.add_column("#", justify="right")
+    table.add_column("model")
+    table.add_column("")
+    for i, name in enumerate(names, 1):
+        marker = "← current" if _is_current_model(name, current) else ""
+        table.add_row(str(i), name, marker)
+    console.print(table)
+
+
+def choose_model_interactive(console: Console, current_model: str) -> str | None:
+    """Discover local Ollama models and let the user pick one.
+
+    Returns the chosen model name, or None if there is nothing to pick or the
+    user cancels.
+    """
+    from local_code.model_discovery import discover_models
+
+    models_dir, names = discover_models()
+    if not names:
+        where = f" in {models_dir}" if models_dir else ""
+        console.print(f"[yellow]no local Ollama models found{where}[/yellow]")
+        console.print(
+            "[dim]pull one with `ollama pull <name>`, "
+            "or type `/model <name>` directly[/dim]"
+        )
+        return None
+    render_models_table(console, names, current_model, models_dir)
+    raw = Prompt.ask(
+        "pick a model (number or name, blank to cancel)", default=""
+    )
+    if not raw.strip():
+        return None
+    picked = resolve_model_choice(raw, names)
+    if picked is None:
+        console.print(f"[red]invalid choice: {raw}[/red]")
+    return picked
 
 
 def print_tools_table(console: Console) -> None:
@@ -637,13 +702,16 @@ def repl(
             session_id = store.new_id()
             console.print(f"[dim]history cleared (new session {session_id})[/dim]")
             continue
-        if action == "model":
-            if not arg:
-                console.print("[red]usage: /model <name>[/red]")
-                continue
+        if action in ("model", "models"):
+            target = arg
+            if not target:
+                # /models, or bare /model -> interactive picker.
+                target = choose_model_interactive(console, agent.config.model)
+                if not target:
+                    continue
             try:
                 agent = build_agent(
-                    client, session, cfg, arg, yolo, detector, console, streamer, checkpoints,
+                    client, session, cfg, target, yolo, detector, console, streamer, checkpoints,
                     plan_mode=agent.config.plan_mode, spawn_factory=spawn_factory,
                 )
             except OllamaError as e:
