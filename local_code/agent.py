@@ -162,8 +162,18 @@ class Agent:
             messages = self._native_messages()
             content, tool_calls = self._stream(messages, schemas)
             if not tool_calls:
-                self.session.add({"role": "assistant", "content": content})
-                return content
+                # Some local models emit the tool call as plain text instead of
+                # a structured tool_calls array. Recover it before giving up.
+                harvested = react.find_tool_calls_in_text(
+                    content, lambda n: tools.get_tool(n) is not None
+                )
+                if not harvested:
+                    self.session.add({"role": "assistant", "content": content})
+                    return content
+                tool_calls = [
+                    {"function": {"name": c.name, "arguments": c.arguments}}
+                    for c in harvested
+                ]
             self.session.add(
                 {"role": "assistant", "content": content, "tool_calls": tool_calls}
             )
