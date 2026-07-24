@@ -215,3 +215,42 @@ def test_default_system_prompt_has_no_cwd_field():
     from local_code.agent import DEFAULT_SYSTEM_PROMPT
 
     assert "{cwd}" not in DEFAULT_SYSTEM_PROMPT
+
+
+def test_build_agent_forwards_tool_callbacks(tmp_path):
+    from local_code.checkpoints import CheckpointStore
+    from local_code.cli import build_agent
+    from local_code.config import Config
+    from local_code.session import Session
+
+    class FakeDetector:
+        def supports_tools(self, model):
+            return True
+
+    class FakeClient:
+        name = "fake"
+
+        def show(self, model):
+            return {}
+
+        def chat(self, *a, **k):
+            return iter([])
+
+    starts, ends = [], []
+    agent = build_agent(
+        client=FakeClient(),
+        session=Session(system_prompt="x"),
+        cfg=Config(),
+        model="m",
+        yolo=True,
+        detector=FakeDetector(),
+        console=None,
+        streamer=None,
+        checkpoint_store=CheckpointStore(dir=tmp_path / "cp"),
+        on_tool_start=lambda n, a: starts.append((n, a)),
+        on_tool_end=lambda n, r: ends.append((n, r)),
+    )
+    agent.on_tool_start("read_file", {"path": "x"})
+    agent.on_tool_end("read_file", "ok")
+    assert starts == [("read_file", {"path": "x"})]
+    assert ends == [("read_file", "ok")]

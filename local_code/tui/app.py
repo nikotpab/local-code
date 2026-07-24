@@ -216,6 +216,12 @@ class LocalCodeApp(App):
         def on_todos_ui(todos: list) -> None:
             self.call_from_thread(self._on_todos, todos)
 
+        def on_tool_start_ui(name: str, arguments: dict) -> None:
+            self.call_from_thread(self._on_tool_start, name, arguments)
+
+        def on_tool_end_ui(name: str, result: str) -> None:
+            self.call_from_thread(self._on_tool_end, name, result)
+
         self.agent = build_agent(
             client=self.app_ctx.client,
             session=self.app_ctx.session,
@@ -234,6 +240,8 @@ class LocalCodeApp(App):
             on_stream_start=on_stream_start_ui,
             on_stream_end=on_stream_end_ui,
             on_todos=on_todos_ui,
+            on_tool_start=on_tool_start_ui,
+            on_tool_end=on_tool_end_ui,
         )
 
     def _update_header(self) -> None:
@@ -285,6 +293,20 @@ class LocalCodeApp(App):
     def _on_todos(self, todos: list) -> None:
         activity = self.query_one(ActivityPane)
         activity.update_todos(todos)
+
+    def _on_tool_start(self, name: str, arguments: dict) -> None:
+        conv_pane = self.query_one(ConversationPane)
+        conv_pane.add_tool_start(name, arguments)
+        # Surface the diff/preview of file edits in the activity pane.
+        tool = tools.get_tool(name)
+        if tool is not None and hasattr(tool, "preview"):
+            try:
+                self.query_one(ActivityPane).update_diff(tool.preview(arguments))
+            except Exception:
+                pass
+
+    def _on_tool_end(self, name: str, result: str) -> None:
+        self.query_one(ConversationPane).add_tool_end(name, result)
 
     def _show_confirmation_modal(
         self, name: str, preview: str, callback: Callable[[str], None]

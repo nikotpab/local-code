@@ -159,3 +159,17 @@ def test_tui_confirmation_bridge_fail_closed(dummy_app_ctx):
     bridge = ThreadSafeConfirmationBridge(FakeApp(), mock_show_modal)
     result = bridge.confirm("bash", "rm -rf /")
     assert result == "no"
+
+
+def test_tui_renders_tool_activity(dummy_app_ctx):
+    async def _test():
+        app = LocalCodeApp(dummy_app_ctx)
+        async with app.run_test() as pilot:
+            conv = app.query_one(ConversationPane)
+            before = len(list(conv.children))
+            app._on_tool_start("read_file", {"path": "a.py"})
+            app._on_tool_end("read_file", "42 chars")
+            await pilot.pause()
+            assert len(list(conv.children)) > before
+
+    asyncio.run(_test())

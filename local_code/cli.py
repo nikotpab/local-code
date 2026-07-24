@@ -189,6 +189,8 @@ def build_agent(
     on_stream_start: Callable[[], None] | None = None,
     on_stream_end: Callable[[], None] | None = None,
     on_todos: Callable[[list], None] | None = None,
+    on_tool_start: Callable[[str, dict], None] | None = None,
+    on_tool_end: Callable[[str, str], None] | None = None,
 ) -> Agent:
     native = detector.supports_tools(model)
     mode = "native tool calling" if native else "ReAct fallback (no native tool support)"
@@ -222,8 +224,12 @@ def build_agent(
     eff_on_stream_end = on_stream_end or (streamer.end if streamer else (lambda: None))
     eff_on_todos = on_todos or (make_todo_renderer(console) if console else None)
 
-    on_tool_start = (lambda n, a: ui.render_tool_start(console, n, a)) if console else None
-    on_tool_end = (lambda n, r: ui.render_tool_end(console, n, r)) if console else None
+    eff_on_tool_start = on_tool_start or (
+        (lambda n, a: ui.render_tool_start(console, n, a)) if console else None
+    )
+    eff_on_tool_end = on_tool_end or (
+        (lambda n, r: ui.render_tool_end(console, n, r)) if console else None
+    )
 
     agent = Agent(
         client,
@@ -240,8 +246,8 @@ def build_agent(
         on_todos=eff_on_todos,
         hook_runner=hook_runner,
         checkpoint_store=checkpoint_store,
-        on_tool_start=on_tool_start,
-        on_tool_end=on_tool_end,
+        on_tool_start=eff_on_tool_start,
+        on_tool_end=eff_on_tool_end,
     )
     if spawn_factory is not None:
         agent.context.spawn = spawn_factory
