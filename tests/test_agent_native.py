@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from local_code.agent import DECLINED, Agent, AgentConfig
 from local_code.session import Session
 from tests.conftest import FakeClient, text_chunks, tool_call_chunks

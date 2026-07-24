@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Stdio JSON-RPC 2.0 transport for MCP servers.
 
 One JSON object per line (newline-delimited), UTF-8.
 Reads stderr in a background thread so it never blocks the main path.
 """
+
+from __future__ import annotations
 
 import json
 import subprocess
@@ -103,8 +103,6 @@ class StdioTransport:
         # A well-behaved server sends exactly one response per request, but we
         # skip stray notifications (messages without an "id") gracefully.
         import select as _select
-
-        deadline_remaining = timeout
         import time
         t0 = time.monotonic()
 
@@ -117,8 +115,8 @@ class StdioTransport:
             # Wait for data to be available on stdout with a timeout.
             try:
                 ready, _, _ = _select.select([self._stdout], [], [], remaining)
-            except (OSError, ValueError):
-                raise TransportError("stdout not selectable; process may have died")
+            except (OSError, ValueError) as e:
+                raise TransportError("stdout not selectable; process may have died") from e
             if not ready:
                 raise TransportError(f"request '{method}' timed out after {timeout}s")
 

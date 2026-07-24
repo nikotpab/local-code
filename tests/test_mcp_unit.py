@@ -17,16 +17,13 @@ import io
 import json
 import os
 import threading
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import local_code.mcp.transport as transport_mod
-from local_code.mcp.client import MCPClient, MCPToolInfo, _parse_call_result
+from local_code.mcp.client import MCPToolInfo, _parse_call_result
 from local_code.mcp.manager import MCPManager, MCPToolAdapter
 from local_code.mcp.transport import StdioTransport, TransportError
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -191,7 +188,6 @@ class TestTransportFraming:
         def serve():
             # Drain the request, then send garbage
             read_req()
-            import os as _os
             # Write raw garbage to stdout_wb — access the pipe directly via transport
             pass  # We can't access stdout_wb here; use static transport instead
 
@@ -430,8 +426,9 @@ class TestRegistryMerge:
         assert reg.get_tool(unique_name) is adapter
 
     def test_name_clash_skips_mcp_adapter(self, caplog):
-        import local_code.tools as reg
         import logging
+
+        import local_code.tools as reg
 
         # bash is a local tool — an MCP adapter with the same name should be skipped.
         original_bash = reg.get_tool("bash")

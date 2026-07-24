@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
 import stat
 
-from local_code.hooks import HookRunner, HookResult
+from local_code.hooks import HookResult, HookRunner
 
 
 def write_hook(dir, name, body, executable=True):

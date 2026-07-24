@@ -140,6 +140,7 @@ class TestDegradation:
         # Use a very short timeout to keep the test fast.
         # We bypass the normal start() to inject a short timeout.
         import subprocess
+
         from local_code.mcp.client import MCPClient
         from local_code.mcp.transport import StdioTransport, TransportError
 

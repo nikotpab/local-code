@@ -2,9 +2,8 @@ from __future__ import annotations
 
 """Tests for Plan Mode and Subagents features."""
 
-import pytest
 
-from local_code.agent import Agent, AgentConfig, PLAN_MODE_INSTRUCTION
+from local_code.agent import PLAN_MODE_INSTRUCTION, Agent, AgentConfig
 from local_code.cli import (
     _last_assistant_message,
     handle_command,
@@ -12,10 +11,9 @@ from local_code.cli import (
     parse_args,
 )
 from local_code.session import Session
-from local_code.tools.context import ToolContext
 from local_code.tools import spawn_agent as spawn_agent_mod
+from local_code.tools.context import ToolContext
 from tests.conftest import FakeClient, text_chunks, tool_call_chunks
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -254,8 +252,9 @@ class TestSpawnAgentRun:
 
 class TestSpawnFactory:
     def _make_console(self):
-        from rich.console import Console
         import io
+
+        from rich.console import Console
         return Console(file=io.StringIO(), highlight=False)
 
     def test_factory_returns_string(self, monkeypatch):

@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.status import Status
 from rich.text import Text
 
 ACCENT = "cyan"
@@ -131,7 +132,7 @@ class ResponseView:
     def __init__(self, console: Console):
         self.console = console
         self.buffer = ""
-        self._status = None
+        self._status: Status | None = None
         self._live: Live | None = None
 
     def _stop_all(self) -> None:

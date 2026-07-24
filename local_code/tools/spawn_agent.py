@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """spawn_agent tool — delegates a focused sub-task to a fresh read-only agent.
 
 The subagent investigates with read-only tools and returns a text report.
 It cannot spawn further subagents (recursion guard: ToolContext.spawn is None).
 Write-capable subagents are outside the scope of v1.
 """
+
+from __future__ import annotations
 
 from local_code.tools.context import ToolContext
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from local_code import react, tools
 from local_code.tools import ToolContext
@@ -43,7 +43,7 @@ class Agent:
         session,
         config: AgentConfig,
         use_native: bool,
-        confirm: Callable[[str, str], bool] | None = None,
+        confirm: Callable[[str, str], bool | str] | None = None,
         on_token: Callable[[str], None] | None = None,
         notify: Callable[[str], None] | None = None,
         on_stream_start: Callable[[], None] | None = None,

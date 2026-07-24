@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import pytest
 
+import pytest
 from rich.console import Console
 
-from local_code.agent import Agent, AgentConfig
-from local_code.capabilities import CapabilityDetector
 from local_code.checkpoints import CheckpointStore
 from local_code.cli import AppContext, parse_args
 from local_code.config import Config
@@ -17,7 +15,6 @@ from local_code.tui.app import LocalCodeApp
 from local_code.tui.bridge import ThreadSafeConfirmationBridge
 from local_code.tui.widgets import (
     ActivityPane,
-    ConfirmationModal,
     ConversationPane,
     HeaderBar,
 )
@@ -29,8 +26,7 @@ class FakeClient:
         self.responses = responses or [{"message": {"content": "Hello world from fake-backend!"}}]
 
     def chat(self, model: str, messages: list[dict], tools: list[dict] | None = None):
-        for r in self.responses:
-            yield r
+        yield from self.responses
 
 
 class FakeDetector:

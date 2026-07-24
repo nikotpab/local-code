@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """MCP server manager.
 
 Reads a list of server configs, spawns each subprocess, performs the
@@ -12,10 +10,10 @@ Failures at any stage (spawn, handshake, list) are caught and logged as dim
 warnings; the CLI never crashes because of a broken MCP server.
 """
 
-import json
+from __future__ import annotations
+
 import os
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -54,7 +52,7 @@ class MCPToolAdapter:
         self._tool_name = tool_info.name
         self._client = client
 
-    def run(self, arguments: dict, context: "ToolContext") -> str:  # noqa: ARG002
+    def run(self, arguments: dict, context: ToolContext) -> str:  # noqa: ARG002
         try:
             return self._client.call_tool(self._tool_name, arguments)
         except TransportError as exc:
@@ -114,7 +112,7 @@ class MCPManager:
         trusted: bool = bool(cfg.get("trust", False))
 
         if not name or not command:
-            self._notify(f"[dim]mcp: skipping server with missing name or command[/dim]")
+            self._notify("[dim]mcp: skipping server with missing name or command[/dim]")
             return
 
         # Build environment

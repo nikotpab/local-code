@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from local_code.environment import (
     MAX_HOME_ENTRIES,
     environment_block,

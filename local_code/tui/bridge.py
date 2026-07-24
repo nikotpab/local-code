@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Callable, Any
+from collections.abc import Callable
 
 from textual.app import App
 

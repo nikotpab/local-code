@@ -105,7 +105,7 @@ def test_uppercase_scheme_accepted(monkeypatch):
 
 
 def test_bogus_charset_falls_back_to_utf8(monkeypatch):
-    body = "café".encode("utf-8")
+    body = "café".encode()
     install_get(monkeypatch, FakeResponse(body=body, encoding="bogus-charset"))
     out = web_fetch.run({"url": "https://x.test"}, CTX)
     assert out == "café"

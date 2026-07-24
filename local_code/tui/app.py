@@ -1,41 +1,29 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from rich.console import Console
-
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Footer, TextArea, Static, Label
+from textual.containers import Container, Horizontal
+from textual.widgets import Footer, TextArea
 from textual.worker import Worker
 
 from local_code import tools
-from local_code.agent import Agent, AgentConfig
+from local_code.agent import Agent
 from local_code.backends import OllamaError
-from local_code.checkpoints import CheckpointStore
 from local_code.cli import (
     AppContext,
+    _last_assistant_message,
     build_agent,
     handle_command,
     help_text,
     history_summary,
-    make_spawn_factory,
-    parse_args,
-    print_mcp_table,
-    print_sessions_table,
-    print_tools_table,
     save_session,
-    setup_app_context,
-    _last_assistant_message,
 )
 from local_code.compaction import estimate_tokens
 from local_code.custom_commands import load_custom_command
 from local_code.mentions import expand_file_mentions
-from local_code.session import Session
-from local_code.session_store import SessionStore
 from local_code.tui.bridge import ThreadSafeConfirmationBridge
 from local_code.tui.widgets import (
     ActivityPane,
@@ -43,7 +31,6 @@ from local_code.tui.widgets import (
     ConversationPane,
     HeaderBar,
 )
-
 
 TUI_CSS = """
 Screen {

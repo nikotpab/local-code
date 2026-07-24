@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import warnings
+from typing import Any
 
 from local_code.tools import (
     bash,
@@ -47,7 +47,7 @@ ALL_TOOLS = [
 ]
 
 # Mutable registry — local tools first, MCP tools appended after startup.
-_BY_NAME: dict[str, object] = {t.NAME: t for t in ALL_TOOLS}
+_BY_NAME: dict[str, Any] = {t.NAME: t for t in ALL_TOOLS}
 
 
 # ---------------------------------------------------------------------------

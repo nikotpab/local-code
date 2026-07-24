@@ -1,19 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from rich.text import Text
-from rich.panel import Panel
-
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Markdown, Static, TextArea
+from textual.widgets import Button, Label, Markdown, Static
 
-from local_code.cli import CONFIRM_CHOICES, TODO_ICONS, style_preview_lines
 from local_code import ui
+from local_code.cli import TODO_ICONS, style_preview_lines
 from local_code.ui import shorten_path
 
 

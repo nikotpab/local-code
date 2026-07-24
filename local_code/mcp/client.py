@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """MCP client — speaks the Model Context Protocol lifecycle over a StdioTransport.
 
 Responsibilities:
@@ -8,10 +6,12 @@ Responsibilities:
 - tools/call  → sends call, parses content blocks, handles isError
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 
-from local_code.mcp.transport import StdioTransport, TransportError
+from local_code.mcp.transport import StdioTransport
 
 PROTOCOL_VERSION = "2024-11-05"
 CLIENT_NAME = "local-code"
