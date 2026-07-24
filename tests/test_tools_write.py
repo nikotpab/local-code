@@ -69,3 +69,59 @@ def test_edit_file_preview_unreadable(tmp_path):
         {"path": str(tmp_path / "nope.py"), "old_string": "a", "new_string": "b"}
     )
     assert "cannot read" in p
+
+
+def test_suspicious_new_home_dir_flags_nonexistent(tmp_path):
+    from local_code.tools import write_file as wf
+
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "Escritorio" / "nota.txt"
+    assert wf.suspicious_new_home_dir(str(target), home=home) == str(home / "Escritorio")
+
+
+def test_suspicious_new_home_dir_ok_for_existing_folder(tmp_path):
+    from local_code.tools import write_file as wf
+
+    home = tmp_path / "home"
+    (home / "Desktop").mkdir(parents=True)
+    target = home / "Desktop" / "nota.txt"
+    assert wf.suspicious_new_home_dir(str(target), home=home) is None
+
+
+def test_suspicious_new_home_dir_ok_directly_in_home(tmp_path):
+    from local_code.tools import write_file as wf
+
+    home = tmp_path / "home"
+    home.mkdir()
+    assert wf.suspicious_new_home_dir(str(home / "nota.txt"), home=home) is None
+
+
+def test_suspicious_new_home_dir_ok_outside_home(tmp_path):
+    from local_code.tools import write_file as wf
+
+    home = tmp_path / "home"
+    home.mkdir()
+    other = tmp_path / "elsewhere" / "x.txt"
+    assert wf.suspicious_new_home_dir(str(other), home=home) is None
+
+
+def test_preview_warns_for_suspicious_path(tmp_path):
+    from local_code.tools import write_file as wf
+
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "Escritorio" / "nota.txt"
+    preview = wf.preview({"path": str(target), "content": "hola"}, home=home)
+    assert "carpeta nueva que no existe" in preview
+    assert str(home / "Escritorio") in preview
+
+
+def test_preview_unchanged_for_normal_path(tmp_path):
+    from local_code.tools import write_file as wf
+
+    home = tmp_path / "home"
+    (home / "Desktop").mkdir(parents=True)
+    target = home / "Desktop" / "nota.txt"
+    preview = wf.preview({"path": str(target), "content": "hola"}, home=home)
+    assert "carpeta nueva" not in preview
