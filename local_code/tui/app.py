@@ -65,21 +65,24 @@ HeaderBar {
 #conv_container {
     width: 1fr;
     height: 1fr;
-    border: round $panel;
-    margin: 0;
+    padding: 1 2;
 }
 
 ConversationPane {
     width: 1fr;
     height: 1fr;
-    padding: 0 1;
+}
+
+#activity_pane {
+    width: 34;
+    height: 1fr;
+    border-left: solid $panel;
+    padding: 1 2;
 }
 
 #activity_container {
-    width: 38;
+    width: 1fr;
     height: 1fr;
-    border: round $panel;
-    padding: 0 1;
 }
 
 .hidden {
@@ -87,9 +90,8 @@ ConversationPane {
 }
 
 #input_container {
-    height: 4;
-    padding: 0 1;
-    margin-bottom: 0;
+    height: 3;
+    padding: 0 2;
 }
 
 #input_box {
