@@ -13,6 +13,7 @@ from local_code.tools import (
     multi_edit,
     read_file,
     set_todos,
+    spawn_agent,
     web_fetch,
     write_file,
 )
@@ -40,6 +41,7 @@ ALL_TOOLS = [
     multi_edit,
     read_file,
     set_todos,
+    spawn_agent,
     web_fetch,
     write_file,
 ]

@@ -32,7 +32,59 @@ local-code "arregla el bug en x.py"    # one-shot, no REPL
 REPL commands: `/help` · `/tools` (tool table) · `/history` (current session
 summary) · `/sessions` (saved sessions) · `/undo` (revert the last file
 change) · `/clear` (reset history, starts a new session) · `/model <name>`
-(hot-switch model, re-detects tool support) · `/exit`.
+(hot-switch model, re-detects tool support) · `/plan` (toggle plan mode) ·
+`/approve` (execute the current plan) · `/mcp` (MCP server status) · `/exit`.
+
+## Plan mode
+
+Start with `--plan` or toggle it with `/plan` in the REPL. In plan mode the
+model is restricted to **read-only tools** (read_file, list_dir, glob, grep,
+set_todos) — side-effecting tools (write_file, edit_file, bash, …) are blocked
+even if `--yolo` is set. The system prompt instructs the model to investigate
+and then output a **numbered step-by-step plan**. The prompt prefix shows
+`[plan]` while active.
+
+```bash
+local-code --plan "refactor the auth module"  # produces a plan, then stops
+```
+
+Inside the REPL:
+
+```
+> /plan         # turn plan mode on
+[plan] > investigate src/auth
+        …model reads files and outputs a plan…
+[plan] > /approve   # turn plan mode off and execute the last plan
+```
+
+`/approve` turns off plan mode and feeds the last assistant message back as
+`"Execute this plan:\n\n{plan}"`, so the model carries out every step with
+full tools.  If there is no prior assistant message, it prints a hint.
+
+## Subagents
+
+The `spawn_agent` tool lets the model delegate a focused investigation task to
+a **fresh read-only subagent**. The subagent uses only read-only tools, runs for
+up to 15 iterations, and returns a text report — it cannot modify files, run
+commands, or spawn further subagents (hard recursion guard).
+
+```json
+{
+  "name": "spawn_agent",
+  "arguments": {
+    "task": "list all places where Config is read and summarise the defaults",
+    "model": "llama3.2"   // optional — defaults to the parent model
+  }
+}
+```
+
+The report is prefixed with `[Subagent report from <model>]` and truncated at
+10 000 characters so it doesn't flood the parent context.
+
+**Write-capable subagents are out of scope for v1** — a subagent that can
+modify files without the user watching is a different risk model that needs
+explicit confirmation wiring.  Add a note in a future feature request if you
+need that.
 
 ## Project context
 

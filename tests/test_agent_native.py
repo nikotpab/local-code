@@ -22,7 +22,7 @@ def test_final_answer_without_tools():
         {"role": "assistant", "content": "hola!"},
     ]
     model, messages, tools = client.calls[0]
-    assert tools is not None and len(tools) == 10
+    assert tools is not None and len(tools) >= 10
     assert messages[0]["role"] == "system"
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from local_code import react, tools
@@ -15,6 +15,17 @@ DEFAULT_SYSTEM_PROMPT = (
     "For multi-step tasks, call set_todos first to plan, and update item "
     "statuses as you progress."
 )
+
+PLAN_MODE_INSTRUCTION = (
+    "\n\n# Plan mode\n"
+    "You are currently in plan mode. Use read-only tools (read_file, list_dir, "
+    "glob, grep, set_todos) to investigate the codebase. "
+    "Do NOT attempt edits, writes, bash commands, or any other side-effecting tool. "
+    "When you have enough information, output a clear, numbered, step-by-step plan "
+    "describing every change you would make. End your response with the plan — "
+    "the user will review it and type /approve to execute it."
+)
+
 DECLINED = "User declined to run this tool."
 
 
@@ -24,6 +35,7 @@ class AgentConfig:
     max_iterations: int = 25
     bash_timeout: int = 120
     yolo: bool = False
+    plan_mode: bool = False
 
 
 class Agent:
@@ -61,6 +73,12 @@ class Agent:
             bash_timeout=config.bash_timeout, on_todos=on_todos
         )
 
+    def _effective_system_prompt(self) -> str:
+        base = self.session.system_prompt or ""
+        if self.config.plan_mode:
+            return base + PLAN_MODE_INSTRUCTION
+        return base
+
     def run_turn(self, user_input: str) -> str:
         if self.compactor is not None:
             self.compactor.maybe_compact(self.session)
@@ -86,6 +104,13 @@ class Agent:
         return content, tool_calls
 
     def _execute(self, name: str, arguments: dict) -> str:
+        # Plan-mode gate: block side-effecting tools regardless of yolo.
+        if self.config.plan_mode and tools.requires_confirmation(name):
+            return (
+                f"Plan mode: not running '{name}'. "
+                f"Describe this change in your plan instead of executing it."
+            )
+
         if not self.config.yolo and tools.requires_confirmation(name):
             pre_allowed = False
             if self.permission_store is not None:
@@ -130,7 +155,9 @@ class Agent:
         schemas = tools.tool_schemas()
         content = ""
         for _ in range(self.config.max_iterations):
-            content, tool_calls = self._stream(self.session.messages, schemas)
+            # Build messages with plan-mode system prompt override when needed.
+            messages = self._native_messages()
+            content, tool_calls = self._stream(messages, schemas)
             if not tool_calls:
                 self.session.add({"role": "assistant", "content": content})
                 return content
@@ -148,9 +175,20 @@ class Agent:
         self.notify(f"Reached max iterations ({self.config.max_iterations}); stopping.")
         return content
 
+    def _native_messages(self) -> list[dict]:
+        """Build the message list for a native tool-calling turn.
+
+        In plan mode the system prompt is augmented, so we rebuild it rather
+        than relying on session.messages (which uses the unaugmented prompt).
+        """
+        prompt = self._effective_system_prompt()
+        if prompt:
+            return [{"role": "system", "content": prompt}] + self.session.history
+        return list(self.session.history)
+
     def _react_messages(self) -> list[dict]:
         system = react.build_system_prompt(
-            self.session.system_prompt or "", tools.tool_schemas()
+            self._effective_system_prompt(), tools.tool_schemas()
         )
         return [{"role": "system", "content": system}] + self.session.history
 

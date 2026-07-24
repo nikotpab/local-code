@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from local_code import tools
-from local_code.agent import DEFAULT_SYSTEM_PROMPT, Agent, AgentConfig
+from local_code.agent import DEFAULT_SYSTEM_PROMPT, PLAN_MODE_INSTRUCTION, Agent, AgentConfig
 from local_code.backends import OllamaError, select_backend
 from local_code.capabilities import CapabilityDetector
 from local_code.checkpoints import CheckpointStore
@@ -27,6 +27,19 @@ from local_code.permissions import PermissionStore
 from local_code.project_context import load_project_context
 from local_code.session import Session
 from local_code.session_store import SessionNotFoundError, SessionStore
+from local_code.tools.context import ToolContext
+
+SUBAGENT_MAX_ITERATIONS = 15
+SUBAGENT_REPORT_MAX_CHARS = 10_000
+
+SUBAGENT_SYSTEM_PROMPT = (
+    "You are a read-only research subagent. "
+    "Your sole purpose is to investigate the task given to you and produce a "
+    "detailed, accurate report. "
+    "Use only read-only tools: read_file, list_dir, glob, grep, set_todos. "
+    "Do NOT write files, run shell commands, or spawn further subagents. "
+    "When you have gathered enough information, output your complete findings."
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -36,6 +49,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--model", help="Model name (default: from ~/.local-code/config.yaml)")
     parser.add_argument("--yolo", action="store_true", help="Skip all tool confirmations")
+    parser.add_argument("--plan", action="store_true", help="Start in plan mode (read-only investigation)")
     parser.add_argument("--system", help="Override the system prompt")
     parser.add_argument(
         "--backend",
@@ -79,6 +93,10 @@ def handle_command(line: str) -> tuple[str, str | None]:
         return ("undo", None)
     if cmd == "/mcp":
         return ("mcp", None)
+    if cmd == "/plan":
+        return ("plan", None)
+    if cmd == "/approve":
+        return ("approve", None)
     return ("custom", stripped)
 
 
@@ -167,15 +185,19 @@ def build_agent(
     console: Console,
     streamer: MarkdownStreamer,
     checkpoint_store: CheckpointStore,
+    plan_mode: bool = False,
+    spawn_factory=None,
 ) -> Agent:
     native = detector.supports_tools(model)
     mode = "native tool calling" if native else "ReAct fallback (no native tool support)"
-    console.print(f"[dim]model: {model} · {mode}[/dim]")
+    plan_tag = " · plan mode" if plan_mode else ""
+    console.print(f"[dim]model: {model} · {mode}{plan_tag}[/dim]")
     agent_cfg = AgentConfig(
         model=model,
         max_iterations=cfg.max_iterations,
         bash_timeout=cfg.bash_timeout_seconds,
         yolo=yolo,
+        plan_mode=plan_mode,
     )
     try:
         window = int(cfg.context_window) if cfg.context_window else 0
@@ -188,7 +210,7 @@ def build_agent(
     )
     permission_store = PermissionStore()
     hook_runner = HookRunner()
-    return Agent(
+    agent = Agent(
         client,
         session,
         agent_cfg,
@@ -204,6 +226,80 @@ def build_agent(
         hook_runner=hook_runner,
         checkpoint_store=checkpoint_store,
     )
+    # Wire the subagent spawn factory into the agent's ToolContext.
+    if spawn_factory is not None:
+        agent.context.spawn = spawn_factory
+    return agent
+
+
+def make_spawn_factory(
+    parent_client,
+    parent_cfg: Config,
+    parent_model: str,
+    console: Console,
+):
+    """Return a spawn(task, model) -> str factory for subagents.
+
+    The subagent:
+    - uses a fresh read-only Session
+    - is always in plan_mode (read-only gate)
+    - has spawn=None on its ToolContext (recursion guard)
+    - is bounded to SUBAGENT_MAX_ITERATIONS
+    - streams are silent (no on_token/on_stream_start/on_stream_end)
+    - any failure is caught and returned as "Error: ..."
+    """
+
+    def spawn(task: str, model: str | None) -> str:
+        effective_model = model or parent_model
+        try:
+            # Reuse the parent's backend/host; a different model name just
+            # changes what we pass to chat().
+            sub_client = parent_client
+
+            sub_session = Session(system_prompt=SUBAGENT_SYSTEM_PROMPT)
+            sub_cfg = AgentConfig(
+                model=effective_model,
+                max_iterations=SUBAGENT_MAX_ITERATIONS,
+                bash_timeout=parent_cfg.bash_timeout_seconds,
+                yolo=False,
+                plan_mode=True,  # enforces read-only gate
+            )
+            # Detect native tool support for the subagent's model.
+            # We check against parent_client which may not support the model —
+            # fall back gracefully.
+            try:
+                from local_code.capabilities import CapabilityDetector
+                detector = CapabilityDetector(sub_client)
+                use_native = detector.supports_tools(effective_model)
+            except Exception:
+                use_native = False
+
+            console.print(f"\n[dim][subagent: {effective_model}] starting…[/dim]")
+
+            sub_agent = Agent(
+                sub_client,
+                sub_session,
+                sub_cfg,
+                use_native=use_native,
+                # Subagents confirm nothing (plan_mode gate handles it).
+                confirm=lambda name, preview: "yes",
+                on_token=lambda token: None,
+                notify=lambda msg: console.print(f"[dim][subagent] {msg}[/dim]"),
+                on_stream_start=lambda: None,
+                on_stream_end=lambda: None,
+            )
+            # Explicit recursion guard: subagent cannot spawn further subagents.
+            sub_agent.context.spawn = None
+
+            result = sub_agent.run_turn(task)
+            if len(result) > SUBAGENT_REPORT_MAX_CHARS:
+                result = result[:SUBAGENT_REPORT_MAX_CHARS] + "\n…[truncated]"
+            console.print(f"[dim][subagent: {effective_model}] done[/dim]")
+            return f"[Subagent report from {effective_model}]\n\n{result}"
+        except Exception as exc:
+            return f"Error: subagent failed: {type(exc).__name__}: {exc}"
+
+    return spawn
 
 
 def save_session(
@@ -221,10 +317,13 @@ def save_session(
 
 def help_text() -> str:
     base = (
-        "Comandos: /help · /tools · /mcp · /history · /sessions · /undo · /clear · /model <name> · /exit\n"
-        "Flags de arranque: --model NAME · --yolo · --system TEXT · --resume [ID]\n"
+        "Comandos: /help · /tools · /mcp · /plan · /approve · "
+        "/history · /sessions · /undo · /clear · /model <name> · /exit\n"
+        "Flags de arranque: --model NAME · --yolo · --plan · --system TEXT · --resume [ID]\n"
         "Confirmaciones: y = sí · n = no · a = siempre (se guarda en ~/.local-code/permissions.yaml)\n"
-        "Menciones: @ruta/archivo inyecta el contenido del archivo en tu mensaje."
+        "Menciones: @ruta/archivo inyecta el contenido del archivo en tu mensaje.\n"
+        "/plan  — toggle plan mode (read-only investigation + numbered plan output)\n"
+        "/approve — execute the last plan: turns off plan mode and re-runs the last assistant message"
     )
     customs = list_custom_commands()
     if customs:
@@ -270,6 +369,16 @@ def print_sessions_table(store: SessionStore, console: Console) -> None:
     console.print(table)
 
 
+def _last_assistant_message(session: Session) -> str | None:
+    """Return the content of the most recent assistant message, or None."""
+    for msg in reversed(session.history):
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "")
+            if content:
+                return content
+    return None
+
+
 def repl(
     client,
     session: Session,
@@ -283,10 +392,14 @@ def repl(
     streamer: MarkdownStreamer,
     checkpoints: CheckpointStore,
     mcp_manager: MCPManager,
+    plan_mode: bool = False,
+    spawn_factory=None,
 ) -> int:
-    console.print("[bold]local-code[/bold] — /help para comandos")
+    plan_suffix = " [plan mode]" if plan_mode else ""
+    console.print(f"[bold]local-code[/bold]{plan_suffix} — /help para comandos")
 
     def run_chat(text: str) -> None:
+        nonlocal session_id
         expanded, warnings = expand_file_mentions(text)
         for w in warnings:
             console.print(f"[dim yellow]{w}[/dim yellow]")
@@ -301,8 +414,9 @@ def repl(
         save_session(store, session_id, agent.config.model, session, console)
 
     while True:
+        plan_indicator = "[plan] " if agent.config.plan_mode else ""
         try:
-            line = console.input("\n[bold cyan]> [/bold cyan]")
+            line = console.input(f"\n[bold cyan]{plan_indicator}> [/bold cyan]")
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
@@ -320,7 +434,8 @@ def repl(
                 continue
             try:
                 agent = build_agent(
-                    client, session, cfg, arg, yolo, detector, console, streamer, checkpoints
+                    client, session, cfg, arg, yolo, detector, console, streamer, checkpoints,
+                    plan_mode=agent.config.plan_mode, spawn_factory=spawn_factory,
                 )
             except OllamaError as e:
                 console.print(f"[red]{e}[/red]")
@@ -333,6 +448,24 @@ def repl(
             continue
         if action == "mcp":
             print_mcp_table(console, mcp_manager)
+            continue
+        if action == "plan":
+            # Toggle plan mode on/off.
+            new_plan_mode = not agent.config.plan_mode
+            agent.config.plan_mode = new_plan_mode
+            status = "on" if new_plan_mode else "off"
+            console.print(f"[dim]plan mode {status}[/dim]")
+            continue
+        if action == "approve":
+            # Turn off plan mode and feed the last assistant message back as
+            # "Execute this plan:\n\n{plan}" so the agent carries it out.
+            last_plan = _last_assistant_message(session)
+            if last_plan is None:
+                console.print("[dim]no plan to approve — run a plan-mode turn first[/dim]")
+                continue
+            agent.config.plan_mode = False
+            console.print("[dim]plan mode off — executing plan…[/dim]")
+            run_chat(f"Execute this plan:\n\n{last_plan}")
             continue
         if action == "history":
             console.print(
@@ -375,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     detector = CapabilityDetector(client)
     model = args.model or cfg.default_model
+    plan_mode: bool = getattr(args, "plan", False)
 
     if args.system:
         base_system = args.system
@@ -424,10 +558,14 @@ def main(argv: list[str] | None = None) -> int:
         session = Session(system_prompt=base_system)
         session_id = store.new_id()
 
+    # Build the subagent spawn factory.
+    spawn_factory = make_spawn_factory(client, cfg, model, console)
+
     streamer = MarkdownStreamer(console)
     try:
         agent = build_agent(
-            client, session, cfg, model, args.yolo, detector, console, streamer, checkpoints
+            client, session, cfg, model, args.yolo, detector, console, streamer, checkpoints,
+            plan_mode=plan_mode, spawn_factory=spawn_factory,
         )
     except OllamaError as e:
         console.print(f"[red]{e}[/red]")
@@ -453,6 +591,7 @@ def main(argv: list[str] | None = None) -> int:
         return repl(
             client, session, cfg, args.yolo, detector, console, agent, store, session_id,
             streamer, checkpoints, mcp_manager,
+            plan_mode=plan_mode, spawn_factory=spawn_factory,
         )
     finally:
         mcp_manager.shutdown()
