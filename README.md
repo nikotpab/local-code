@@ -26,6 +26,7 @@ local-code --system "sos experto en Rust"
 local-code --backend openai            # force the OpenAI-compatible client
 local-code --resume                    # resume the latest session
 local-code --resume 20260722-153045-a1b2  # resume a specific session
+local-code --no-tui                 # force line-based REPL instead of TUI
 local-code "arregla el bug en x.py"    # one-shot, no REPL
 ```
 
@@ -34,6 +35,27 @@ summary) · `/sessions` (saved sessions) · `/undo` (revert the last file
 change) · `/clear` (reset history, starts a new session) · `/model <name>`
 (hot-switch model, re-detects tool support) · `/plan` (toggle plan mode) ·
 `/approve` (execute the current plan) · `/mcp` (MCP server status) · `/exit`.
+
+## TUI (Full-Screen Interface)
+
+When launched interactively on a terminal, `local-code` opens a full-screen
+split-pane TUI built on `textual`.
+
+- **Header bar**: Model name, backend info, native/ReAct mode, token context usage, plan mode indicator, and working directory.
+- **Conversation Pane**: Left pane with live streaming Markdown assistant responses, user messages, and tool activity logs.
+- **Activity Pane**: Right side panel (toggle with `Ctrl+B`) showing live `set_todos` checklist, syntax-highlighted code diffs from file edits, and MCP server status.
+- **Input Area**: Multi-line prompt input box supporting all slash commands.
+- **Confirmation Modals**: Dialog popups for tool confirmations (`y`=yes, `n`=no, `a`=always).
+
+### TUI Key Bindings
+
+- **Enter**: Submit prompt or slash command
+- **Shift+Enter**: Insert newline in input
+- **Ctrl+B**: Toggle side activity pane
+- **Ctrl+C**: Cancel current turn (or exit if idle)
+- **Ctrl+Q**: Exit application
+
+Use `--no-tui` to force the classic line-based REPL interface.
 
 ## Plan mode
 

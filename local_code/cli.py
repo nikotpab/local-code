@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from rich.console import Console
 from rich.panel import Panel
@@ -42,6 +45,23 @@ SUBAGENT_SYSTEM_PROMPT = (
 )
 
 
+@dataclass
+class AppContext:
+    args: argparse.Namespace
+    cfg: Config
+    console: Console
+    client: object
+    detector: CapabilityDetector
+    model: str
+    plan_mode: bool
+    mcp_manager: MCPManager
+    store: SessionStore
+    checkpoints: CheckpointStore
+    session: Session
+    session_id: str
+    spawn_factory: object
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="local-code",
@@ -65,6 +85,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="ID",
         help="Resume the latest session, or a specific session id",
     )
+    parser.add_argument("--no-tui", action="store_true", help="Force line-based REPL interface instead of full-screen TUI")
     parser.add_argument("prompt", nargs="*", help="One-shot prompt; omit for interactive REPL")
     return parser.parse_args(argv)
 
@@ -157,16 +178,23 @@ def build_agent(
     model: str,
     yolo: bool,
     detector: CapabilityDetector,
-    console: Console,
-    streamer: ui.ResponseView,
-    checkpoint_store: CheckpointStore,
+    console: Console | None = None,
+    streamer: ui.ResponseView | None = None,
+    checkpoint_store: CheckpointStore | None = None,
     plan_mode: bool = False,
     spawn_factory=None,
+    confirm: Callable[[str, str], str] | None = None,
+    on_token: Callable[[str], None] | None = None,
+    notify: Callable[[str], None] | None = None,
+    on_stream_start: Callable[[], None] | None = None,
+    on_stream_end: Callable[[], None] | None = None,
+    on_todos: Callable[[list], None] | None = None,
 ) -> Agent:
     native = detector.supports_tools(model)
     mode = "native tool calling" if native else "ReAct fallback (no native tool support)"
     plan_tag = " · plan mode" if plan_mode else ""
-    console.print(f"[dim]model: {model} · {mode}{plan_tag}[/dim]")
+    if console:
+        console.print(f"[dim]model: {model} · {mode}{plan_tag}[/dim]")
     agent_cfg = AgentConfig(
         model=model,
         max_iterations=cfg.max_iterations,
@@ -179,34 +207,119 @@ def build_agent(
     except (TypeError, ValueError):
         window = 0
     window = window or detect_context_window(client, model)
+
+    eff_notify = notify or (lambda message: console.print(f"\n[dim]{message}[/dim]") if console else (lambda msg: None))
     compactor = Compactor(
         client, model, window,
-        notify=lambda message: console.print(f"[dim]{message}[/dim]"),
+        notify=eff_notify,
     )
     permission_store = PermissionStore()
     hook_runner = HookRunner()
+
+    eff_confirm = confirm or (make_confirmer(console) if console else (lambda n, p: "yes"))
+    eff_on_token = on_token or (streamer.token if streamer else (lambda t: None))
+    eff_on_stream_start = on_stream_start or (streamer.start if streamer else (lambda: None))
+    eff_on_stream_end = on_stream_end or (streamer.end if streamer else (lambda: None))
+    eff_on_todos = on_todos or (make_todo_renderer(console) if console else None)
+
+    on_tool_start = (lambda n, a: ui.render_tool_start(console, n, a)) if console else None
+    on_tool_end = (lambda n, r: ui.render_tool_end(console, n, r)) if console else None
+
     agent = Agent(
         client,
         session,
         agent_cfg,
         use_native=native,
-        confirm=make_confirmer(console),
-        on_token=streamer.token,
-        notify=lambda message: console.print(f"\n[dim]{message}[/dim]"),
-        on_stream_start=streamer.start,
-        on_stream_end=streamer.end,
+        confirm=eff_confirm,
+        on_token=eff_on_token,
+        notify=eff_notify,
+        on_stream_start=eff_on_stream_start,
+        on_stream_end=eff_on_stream_end,
         compactor=compactor,
         permission_store=permission_store,
-        on_todos=make_todo_renderer(console),
+        on_todos=eff_on_todos,
         hook_runner=hook_runner,
         checkpoint_store=checkpoint_store,
-        on_tool_start=lambda n, a: ui.render_tool_start(console, n, a),
-        on_tool_end=lambda n, r: ui.render_tool_end(console, n, r),
+        on_tool_start=on_tool_start,
+        on_tool_end=on_tool_end,
     )
-    # Wire the subagent spawn factory into the agent's ToolContext.
     if spawn_factory is not None:
         agent.context.spawn = spawn_factory
     return agent
+
+
+def setup_app_context(args: argparse.Namespace, console: Console | None = None) -> AppContext:
+    cfg = load_config()
+    client = select_backend(
+        cfg.ollama_host,
+        override=args.backend or cfg.backend,
+        api_key=cfg.api_key,
+    )
+    detector = CapabilityDetector(client)
+    model = args.model or cfg.default_model
+    plan_mode: bool = getattr(args, "plan", False)
+
+    if args.system:
+        base_system = args.system
+    elif cfg.system_prompt:
+        base_system = cfg.system_prompt
+    else:
+        base_system = DEFAULT_SYSTEM_PROMPT
+
+    base_system = f"{base_system}\n\n{environment_block()}"
+
+    ctx = load_project_context()
+    if ctx is not None:
+        ctx_name, ctx_content = ctx
+        base_system = f"{base_system}\n\n# Project context ({ctx_name})\n\n{ctx_content}"
+        if console:
+            console.print(f"[dim]project context: {ctx_name}[/dim]")
+
+    mcp_manager = MCPManager(notify=lambda msg: console.print(msg) if console else None)
+    mcp_configs = load_mcp_server_configs()
+    if mcp_configs:
+        mcp_manager.start(mcp_configs)
+        adapters = mcp_manager.tool_adapters
+        if adapters:
+            from local_code import tools as _tools
+            _tools.register_mcp_tools(adapters)
+
+    store = SessionStore()
+    checkpoints = CheckpointStore()
+    if args.resume is not None:
+        resume_id = store.latest_id() if args.resume == "latest" else args.resume
+        if resume_id is None:
+            raise RuntimeError("No hay sesiones guardadas para retomar.")
+        data = store.load(resume_id)
+        session = Session(system_prompt=data.get("system_prompt") or base_system)
+        session.history.extend(data.get("history", []))
+        session_id = resume_id
+        if console:
+            console.print(
+                f"[dim]resumed session {resume_id} "
+                f"({len(session.history)} messages, saved model: {data.get('model', '?')})[/dim]"
+            )
+    else:
+        session = Session(system_prompt=base_system)
+        session_id = store.new_id()
+
+    spawn_factory = make_spawn_factory(client, cfg, model, console)
+
+    return AppContext(
+        args=args,
+        cfg=cfg,
+        console=console or Console(),
+        client=client,
+        detector=detector,
+        model=model,
+        plan_mode=plan_mode,
+        mcp_manager=mcp_manager,
+        store=store,
+        checkpoints=checkpoints,
+        session=session,
+        session_id=session_id,
+        spawn_factory=spawn_factory,
+    )
 
 
 def make_spawn_factory(
@@ -490,87 +603,41 @@ def repl(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    cfg = load_config()
     console = Console()
     try:
-        client = select_backend(
-            cfg.ollama_host,
-            override=args.backend or cfg.backend,
-            api_key=cfg.api_key,
-        )
-    except ValueError as e:
+        app_ctx = setup_app_context(args, console)
+    except (ValueError, RuntimeError, SessionNotFoundError) as e:
         console.print(f"[red]{e}[/red]")
         return 1
-    detector = CapabilityDetector(client)
-    model = args.model or cfg.default_model
-    plan_mode: bool = getattr(args, "plan", False)
 
-    if args.system:
-        base_system = args.system
-    elif cfg.system_prompt:
-        base_system = cfg.system_prompt
-    else:
-        base_system = DEFAULT_SYSTEM_PROMPT
+    use_tui = not bool(args.prompt) and sys.stdout.isatty() and not getattr(args, "no_tui", False)
 
-    base_system = f"{base_system}\n\n{environment_block()}"
-
-    ctx = load_project_context()
-    if ctx is not None:
-        ctx_name, ctx_content = ctx
-        base_system = f"{base_system}\n\n# Project context ({ctx_name})\n\n{ctx_content}"
-        console.print(f"[dim]project context: {ctx_name}[/dim]")
-
-    # Start MCP servers
-    mcp_manager = MCPManager(notify=lambda msg: console.print(msg))
-    mcp_configs = load_mcp_server_configs()
-    if mcp_configs:
-        mcp_manager.start(mcp_configs)
-        adapters = mcp_manager.tool_adapters
-        if adapters:
-            from local_code import tools as _tools
-            _tools.register_mcp_tools(adapters)
-
-    store = SessionStore()
-    checkpoints = CheckpointStore()
-    if args.resume is not None:
-        resume_id = store.latest_id() if args.resume == "latest" else args.resume
-        if resume_id is None:
-            console.print("[red]No hay sesiones guardadas para retomar.[/red]")
-            mcp_manager.shutdown()
-            return 1
-        try:
-            data = store.load(resume_id)
-        except SessionNotFoundError as e:
-            console.print(f"[red]{e}[/red]")
-            mcp_manager.shutdown()
-            return 1
-        session = Session(system_prompt=data.get("system_prompt") or base_system)
-        session.history.extend(data.get("history", []))
-        session_id = resume_id
-        console.print(
-            f"[dim]resumed session {resume_id} "
-            f"({len(session.history)} messages, saved model: {data.get('model', '?')})[/dim]"
-        )
-    else:
-        session = Session(system_prompt=base_system)
-        session_id = store.new_id()
-
-    # Build the subagent spawn factory.
-    spawn_factory = make_spawn_factory(client, cfg, model, console)
+    if use_tui:
+        from local_code.tui import run_tui
+        return run_tui(app_ctx)
 
     streamer = ui.ResponseView(console)
     try:
         agent = build_agent(
-            client, session, cfg, model, args.yolo, detector, console, streamer, checkpoints,
-            plan_mode=plan_mode, spawn_factory=spawn_factory,
+            app_ctx.client,
+            app_ctx.session,
+            app_ctx.cfg,
+            app_ctx.model,
+            app_ctx.args.yolo,
+            app_ctx.detector,
+            console,
+            streamer,
+            app_ctx.checkpoints,
+            plan_mode=app_ctx.plan_mode,
+            spawn_factory=app_ctx.spawn_factory,
         )
     except OllamaError as e:
         console.print(f"[red]{e}[/red]")
-        mcp_manager.shutdown()
+        app_ctx.mcp_manager.shutdown()
         return 1
 
-    if args.prompt:
-        text, warnings = expand_file_mentions(" ".join(args.prompt))
+    if app_ctx.args.prompt:
+        text, warnings = expand_file_mentions(" ".join(app_ctx.args.prompt))
         for w in warnings:
             console.print(f"[dim yellow]{w}[/dim yellow]")
         try:
@@ -579,16 +646,28 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"\n[red]{e}[/red]")
             return 1
         finally:
-            save_session(store, session_id, model, session, console)
-            mcp_manager.shutdown()
+            save_session(app_ctx.store, app_ctx.session_id, app_ctx.model, app_ctx.session, console)
+            app_ctx.mcp_manager.shutdown()
         print()
         return 0
 
     try:
         return repl(
-            client, session, cfg, args.yolo, detector, console, agent, store, session_id,
-            streamer, checkpoints, mcp_manager,
-            plan_mode=plan_mode, spawn_factory=spawn_factory,
+            app_ctx.client,
+            app_ctx.session,
+            app_ctx.cfg,
+            app_ctx.args.yolo,
+            app_ctx.detector,
+            console,
+            agent,
+            app_ctx.store,
+            app_ctx.session_id,
+            streamer,
+            app_ctx.checkpoints,
+            app_ctx.mcp_manager,
+            plan_mode=app_ctx.plan_mode,
+            spawn_factory=app_ctx.spawn_factory,
         )
     finally:
-        mcp_manager.shutdown()
+        app_ctx.mcp_manager.shutdown()
+
