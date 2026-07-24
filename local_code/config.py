@@ -37,7 +37,7 @@ def load_config(path: Path | None = None) -> Config:
 def load_mcp_server_configs(path: Path | None = None) -> list[dict]:
     """Load MCP server configurations from ``~/.local-code/mcp.json``.
 
-    The file uses the same shape as Claude Desktop:
+    The file uses the same shape as standard MCP client config:
 
     .. code-block:: json
 

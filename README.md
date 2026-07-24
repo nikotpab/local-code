@@ -243,7 +243,7 @@ filesystem, Brave Search, and anything else that speaks the stdio MCP protocol
 
 ### Config: `~/.local-code/mcp.json`
 
-Create this file (same shape as Claude Desktop uses):
+Create this file (standard MCP client config format):
 
 ```json
 {
