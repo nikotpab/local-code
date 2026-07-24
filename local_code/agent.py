@@ -9,7 +9,6 @@ from local_code.tools import ToolContext
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are local-code, a coding agent running in the user's terminal.\n"
-    "Working directory: {cwd}\n"
     "Use the available tools to inspect and modify files and to run commands.\n"
     "Read the relevant files before editing them. Keep answers short.\n"
     "For multi-step tasks, call set_todos first to plan, and update item "

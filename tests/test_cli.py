@@ -202,3 +202,17 @@ def test_build_agent_uses_the_checkpoint_store_it_is_given(tmp_path):
         checkpoint_store=store,
     )
     assert agent.checkpoint_store is store
+
+
+def test_environment_block_is_injected():
+    from local_code.environment import environment_block
+
+    block = environment_block()
+    assert block.startswith("# Environment")
+    assert "Working directory:" in block
+
+
+def test_default_system_prompt_has_no_cwd_field():
+    from local_code.agent import DEFAULT_SYSTEM_PROMPT
+
+    assert "{cwd}" not in DEFAULT_SYSTEM_PROMPT

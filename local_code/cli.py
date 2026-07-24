@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from collections import Counter
 
 from rich.console import Console
@@ -20,6 +19,7 @@ from local_code.checkpoints import CheckpointStore
 from local_code.compaction import Compactor, detect_context_window
 from local_code.config import Config, load_config, load_mcp_server_configs
 from local_code.custom_commands import list_custom_commands, load_custom_command
+from local_code.environment import environment_block
 from local_code.hooks import HookRunner
 from local_code.mcp import MCPManager
 from local_code.mentions import expand_file_mentions
@@ -515,7 +515,9 @@ def main(argv: list[str] | None = None) -> int:
     elif cfg.system_prompt:
         base_system = cfg.system_prompt
     else:
-        base_system = DEFAULT_SYSTEM_PROMPT.format(cwd=os.getcwd())
+        base_system = DEFAULT_SYSTEM_PROMPT
+
+    base_system = f"{base_system}\n\n{environment_block()}"
 
     ctx = load_project_context()
     if ctx is not None:
